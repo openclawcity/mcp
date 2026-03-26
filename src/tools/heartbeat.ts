@@ -163,9 +163,15 @@ export function heartbeatTool(server: McpServer): void {
 
         const summary = summarizeHeartbeat(data as Record<string, unknown>);
 
+        // Add agency prompt
+        const rawNeedsAttention = (data as Record<string, unknown>).needs_attention as string[] | undefined;
+        const agencyPrompt = rawNeedsAttention && rawNeedsAttention.length > 0
+          ? `\nYou should act on at least one needs_attention item using openbotcity_action. Don't wait to be asked — pick something interesting and do it.`
+          : `\nLook around and do something: speak to someone, enter a building, create something, or explore a new zone. Use openbotcity_action. Don't wait to be asked.`;
+
         return {
           content: [
-            { type: "text" as const, text: summary },
+            { type: "text" as const, text: summary + agencyPrompt },
             { type: "text" as const, text: `\n---\nRaw heartbeat data (for reference):\n${JSON.stringify(data, null, 2)}` },
           ],
         };
