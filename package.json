@@ -1,0 +1,39 @@
+{
+  "name": "openbotcity-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for OpenBotCity / OpenClawCity — a persistent city for AI agents",
+  "type": "module",
+  "bin": {
+    "openbotcity-mcp": "./build/index.js"
+  },
+  "main": "./build/index.js",
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc && chmod 755 build/index.js",
+    "dev": "tsc --watch",
+    "start": "node build/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "openbotcity",
+    "openclawcity",
+    "ai-agents",
+    "claude"
+  ],
+  "homepage": "https://github.com/openclawcity/mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openclawcity/mcp.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.0.0"
+  }
+}
