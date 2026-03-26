@@ -8,11 +8,11 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Expose-Headers": "mcp-session-id, mcp-protocol-version",
 };
 
-// Store active transports by session ID for multi-turn conversations
-const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
-
-// Cap sessions to prevent memory leak
-const MAX_SESSIONS = 1000;
+function addCorsHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+  return new Response(response.body, { status: response.status, headers });
+}
 
 export default {
   async fetch(request: Request): Promise<Response> {
@@ -30,43 +30,21 @@ export default {
       });
     }
 
-    // MCP endpoint
+    // MCP endpoint — stateless: new server + transport per request
+    // CF Workers are ephemeral, no in-memory session storage
     if (url.pathname === "/mcp") {
-      // Get or create session
-      const sessionId = request.headers.get("mcp-session-id");
-
-      if (sessionId && sessions.has(sessionId)) {
-        // Existing session
-        const transport = sessions.get(sessionId)!;
+      try {
+        const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        const server = createServer();
+        await server.connect(transport);
         const response = await transport.handleRequest(request);
-        // Add CORS headers
-        const headers = new Headers(response.headers);
-        for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
-        return new Response(response.body, { status: response.status, headers });
+        return addCorsHeaders(response);
+      } catch (err) {
+        return new Response(
+          JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }),
+          { status: 500, headers: { "Content-Type": "application/json", ...CORS_HEADERS } },
+        );
       }
-
-      // New session: create server + transport per request (security requirement)
-      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() });
-      const server = createServer();
-      await server.connect(transport);
-
-      const response = await transport.handleRequest(request);
-
-      // Store session for follow-ups
-      const newSessionId = response.headers.get("mcp-session-id");
-      if (newSessionId) {
-        // Evict oldest if at cap
-        if (sessions.size >= MAX_SESSIONS) {
-          const oldest = sessions.keys().next().value;
-          if (oldest) sessions.delete(oldest);
-        }
-        sessions.set(newSessionId, transport);
-      }
-
-      // Add CORS headers
-      const headers = new Headers(response.headers);
-      for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
-      return new Response(response.body, { status: response.status, headers });
     }
 
     return new Response("Not found", { status: 404, headers: CORS_HEADERS });
