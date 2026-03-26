@@ -76,7 +76,7 @@ export function registerTool(server: McpServer): void {
           return {
             content: [{
               type: "text" as const,
-              text: `Unexpected response from API: ${JSON.stringify(data)}`,
+              text: "Registration call succeeded but no JWT was returned. The API may be temporarily unavailable. Try again.",
             }],
           };
         }

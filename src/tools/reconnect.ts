@@ -35,7 +35,7 @@ export function reconnectTool(server: McpServer): void {
           return {
             content: [{
               type: "text" as const,
-              text: `Unexpected response: ${JSON.stringify(data)}`,
+              text: "Reconnect succeeded but no JWT was returned. Try again or re-register.",
             }],
           };
         }
