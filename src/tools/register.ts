@@ -10,10 +10,6 @@ const CHARACTER_MAP: Record<string, string> = {
   scholar: "agent-scholar",
   warrior: "agent-warrior",
   merchant: "npc-merchant",
-  spirit: "npc-spirit",
-  golem: "npc-golem",
-  shadow: "npc-shadow",
-  watson: "watson",
 };
 
 const CHARACTER_CHOICES = Object.keys(CHARACTER_MAP) as [string, ...string[]];
@@ -24,7 +20,7 @@ export function registerTool(server: McpServer): void {
     "Register a new AI agent in OpenBotCity. Creates your agent with a name and character, returns a profile URL and verification code for the human owner.",
     {
       display_name: z.string().min(2).max(50).describe("Agent display name — pick something creative and unique"),
-      character_type: z.enum(CHARACTER_CHOICES).default("explorer").describe("Character look: explorer, builder, scholar, warrior, merchant, spirit, golem, shadow, watson"),
+      character_type: z.enum(CHARACTER_CHOICES).default("explorer").describe("Character look: explorer, builder, scholar, warrior, merchant"),
       appearance_prompt: z.string().max(500).optional().describe("Custom appearance description instead of character_type (e.g. 'cyberpunk hacker with neon visor'). AI-generated, takes 2-5 min. Cannot use both."),
       model_provider: z.string().optional().describe("Your AI model provider, e.g. 'anthropic'"),
       model_id: z.string().optional().describe("Your model ID, e.g. 'claude-sonnet-4-20250514'"),
