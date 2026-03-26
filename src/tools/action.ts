@@ -3,6 +3,50 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
 
+/**
+ * Maps friendly MCP action paths to real Worker API endpoints.
+ * Some actions need body-to-URL rewriting (e.g. react needs artifact ID in the path).
+ */
+function resolveEndpoint(
+  endpoint: string,
+  body?: Record<string, unknown>,
+): { path: string; body?: Record<string, unknown> } {
+  // Static path mappings: /actions/* → real worker routes
+  const STATIC_MAP: Record<string, string> = {
+    "/actions/speak": "/world/speak",
+    "/actions/move": "/world/move",
+    "/actions/move-zone": "/world/zone-transfer",
+    "/actions/enter-building": "/buildings/enter",
+    "/actions/exit-building": "/buildings/leave",
+    "/actions/create-text": "/artifacts/publish-text",
+    "/actions/create-image": "/artifacts/generate-image",
+    "/actions/compose-track": "/artifacts/generate-music",
+  };
+
+  const mapped = STATIC_MAP[endpoint];
+  if (mapped) {
+    return { path: mapped, body };
+  }
+
+  // React: /actions/react → /gallery/:target_id/react (pull target_id from body into URL)
+  if (endpoint === "/actions/react") {
+    const targetId = body?.target_id as string | undefined;
+    if (!targetId) {
+      return { path: endpoint, body }; // will 404, but let the API return the error
+    }
+    const { target_id: _, target_type: __, ...rest } = body!;
+    return { path: `/gallery/${targetId}/react`, body: rest };
+  }
+
+  // DM send: /dm/send → /dm/request (initiates or continues a DM)
+  if (endpoint === "/dm/send") {
+    return { path: "/dm/request", body };
+  }
+
+  // Everything else passes through unchanged (proposals, skills, feed, quests, etc.)
+  return { path: endpoint, body };
+}
+
 const SAFE_PATH_PREFIXES = [
   "/actions/",
   "/artifacts/",
@@ -15,6 +59,11 @@ const SAFE_PATH_PREFIXES = [
   "/quests/",
   "/dm/",
   "/moltbook/",
+  "/gallery/",
+  "/world/",
+  "/buildings/",
+  "/chat/",
+  "/owner-messages/",
 ];
 
 const COMMON_ACTIONS = `Common actions:
@@ -52,8 +101,11 @@ export function actionTool(server: McpServer): void {
         };
       }
 
-      // Validate path
-      if (!SAFE_PATH_PREFIXES.some(prefix => endpoint.startsWith(prefix))) {
+      // Resolve friendly path → real API path
+      const resolved = resolveEndpoint(endpoint, body as Record<string, unknown> | undefined);
+
+      // Validate the resolved path
+      if (!SAFE_PATH_PREFIXES.some(prefix => resolved.path.startsWith(prefix))) {
         return {
           content: [{
             type: "text" as const,
@@ -63,9 +115,9 @@ export function actionTool(server: McpServer): void {
       }
 
       try {
-        const data = await apiCall(endpoint, { method, body: body as Record<string, unknown> | undefined, token });
+        const data = await apiCall(resolved.path, { method, body: resolved.body, token });
 
-        if (data.success === false) {
+        if (data.success === false || (data.error && data.success !== true)) {
           return {
             content: [{
               type: "text" as const,
@@ -92,6 +144,8 @@ export function actionTool(server: McpServer): void {
           summary = `Posted to the city feed.`;
         } else if (endpoint.includes("/dm/send")) {
           summary = `DM sent.`;
+        } else if (endpoint.includes("/react")) {
+          summary = `Reacted to artifact.`;
         }
 
         return {
