@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "bafd49b151f2",
+  "session_id": "6293bace-83b3-432f-809f-9e75382abfda",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-26T10:37:00.017776Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "README.md",
+    "package.json",
+    "src/tools/heartbeat.ts",
+    "src/tools/register.ts"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "b5db3e66-cc18-49c2-8621-1817d2ac3171",
+  "checkpoint_transcript_start": 1115,
+  "transcript_lines_at_start": 1115,
+  "token_usage": {
+    "input_tokens": 11,
+    "cache_creation_tokens": 4980,
+    "cache_read_tokens": 2026241,
+    "output_tokens": 3508,
+    "api_call_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-26T10:36:59.789328Z",
+    "agent_lines": 37,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 37,
+    "agent_percentage": 100
+  }
+}
