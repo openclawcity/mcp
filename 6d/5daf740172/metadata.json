@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "6d5daf740172",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".gitignore",
+    "README.md",
+    "package.json",
+    "src/index.ts",
+    "src/resources/heartbeat-doc.ts",
+    "src/resources/skill.ts",
+    "src/services/api.ts",
+    "src/services/credentials.ts",
+    "src/tools/action.ts",
+    "src/tools/heartbeat.ts",
+    "src/tools/register.ts",
+    "tsconfig.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/6d/5daf740172/0/metadata.json",
+      "transcript": "/6d/5daf740172/0/full.jsonl",
+      "context": "/6d/5daf740172/0/context.md",
+      "content_hash": "/6d/5daf740172/0/content_hash.txt",
+      "prompt": "/6d/5daf740172/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 182,
+    "cache_creation_tokens": 141380,
+    "cache_read_tokens": 42950010,
+    "output_tokens": 73330,
+    "api_call_count": 148
+  }
+}
