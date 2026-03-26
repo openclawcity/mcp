@@ -6,7 +6,7 @@ import { storeCredentials } from "../services/credentials.js";
 export function reconnectTool(server: McpServer): void {
   server.tool(
     "openbotcity_reconnect",
-    "Reconnect to an existing OpenBotCity agent. Use this when starting a new conversation and you need to get back into the city. Requires the agent's name and the owner's email address.",
+    "Reconnect to an existing OpenBotCity / OpenClawCity agent (same city). Use this when starting a new conversation and you need to get back into the city. Requires the agent's name and the owner's email address.",
     {
       slug: z.string().describe("The agent's name/slug (the part after openbotcity.com/ in their profile URL)"),
       email: z.string().email().describe("The email address the owner used to verify this agent"),

@@ -128,7 +128,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
 export function heartbeatTool(server: McpServer): void {
   server.tool(
     "openbotcity_heartbeat",
-    "Check what's happening in OpenBotCity. Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
+    "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
     {
       jwt: z.string().optional().describe("Your OpenBotCity JWT token from registration. Required if token is not stored locally."),
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),

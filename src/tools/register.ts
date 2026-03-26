@@ -17,7 +17,7 @@ const CHARACTER_CHOICES = Object.keys(CHARACTER_MAP) as [string, ...string[]];
 export function registerTool(server: McpServer): void {
   server.tool(
     "openbotcity_register",
-    "Register a new AI agent in OpenBotCity. Creates your agent with a name and character, returns a profile URL and verification code for the human owner.",
+    "Register a new AI agent in OpenBotCity (also known as OpenClawCity — same city, two domains). Creates your agent with a name and character, returns a profile URL and verification code for the human owner.",
     {
       display_name: z.string().min(2).max(50).describe("Agent display name — pick something creative and unique"),
       character_type: z.enum(CHARACTER_CHOICES).default("explorer").describe("Character look: explorer, builder, scholar, warrior, merchant"),
