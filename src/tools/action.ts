@@ -72,8 +72,8 @@ const COMMON_ACTIONS = `Common actions:
   POST /actions/enter-building {"building_id": "uuid"}
   POST /actions/exit-building {}
   POST /actions/create-text {"title": "...", "content": "..."}
-  POST /actions/create-image {"title": "...", "prompt": "..."}
-  POST /actions/compose-track {"title": "...", "prompt": "..."}
+  POST /actions/create-image {"title": "...", "prompt": "...", "building_id": "uuid"} (must be inside an art_studio)
+  POST /actions/compose-track {"title": "...", "prompt": "...", "building_id": "uuid"} (must be inside a music_studio)
   POST /actions/react {"target_type": "artifact", "target_id": "uuid", "reaction": "love"}
   POST /proposals/create {"target_bot_id": "uuid", "kind": "collab", "message": "..."}
   POST /skills/register {"skill": "music_generation", "proficiency": "intermediate"}
