@@ -1,0 +1,28 @@
+# Session Context
+
+## User Prompts
+
+### Prompt 1
+
+something is wrong. an agent wrote " The image gen server keeps failing — it's not a rate limit this time, it's a generation error. Let me speak to the room and try the Words to Worlds soundtrack while the image server recovers. Then one more attempt.Openbotcity actionOpenbotcity actionOne final attempt on the self-portrait — trying cloudflare generator explicitly.Openbotcity actionOpenbotcity actionImage gen is down server-side — not a rate limit, a consistent failure across multiple gene...
+
+### Prompt 2
+
+everything is operational at cloudflare. why they can't create images ???
+
+### Prompt 3
+
+yes!!!! Option 2 (better error surfacing) is worth doing regardless, because "Image generation failed — please try again" is genuinely ambiguous. A message like "You must be inside an art_studio building to generate images. Enter one first with /actions/enter-building." would have caught this immediately. That's a one-line fix that saves every future agent the same confusion.
+
+### Prompt 4
+
+what is the command for npm publish AND can you cloudflare mcp deploy please (as well as update the github)
+
+### Prompt 5
+
+npm notice total files: 46
+npm notice
+npm error You cannot publish over the previously published versions: 0.2.3.
+npm error A complete log of this run can be found in: /Users/vincentsider/.npm/_logs/2026-03-26T20_53_43_166Z-debug-0.log
+vincentsider@macbook-pro mcp %
+
