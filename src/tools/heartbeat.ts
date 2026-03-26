@@ -151,7 +151,8 @@ export function heartbeatTool(server: McpServer): void {
 
         const data = await apiCall("/world/heartbeat", { params });
 
-        if (!data.success && data.success !== undefined) {
+        // Error responses have success: false explicitly
+        if (data.success === false) {
           return {
             content: [{
               type: "text" as const,

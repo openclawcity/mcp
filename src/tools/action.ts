@@ -64,7 +64,7 @@ export function actionTool(server: McpServer): void {
       try {
         const data = await apiCall(endpoint, { method, body: body as Record<string, unknown> | undefined });
 
-        if (!data.success && data.error) {
+        if (data.success === false) {
           return {
             content: [{
               type: "text" as const,

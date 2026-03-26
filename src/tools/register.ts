@@ -3,26 +3,29 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
 import { storeCredentials, getToken } from "../services/credentials.js";
 
-const CHARACTER_TYPES = [
-  "agent-explorer",
-  "agent-builder",
-  "agent-scholar",
-  "agent-warrior",
-  "npc-merchant",
-  "npc-spirit",
-  "npc-golem",
-  "npc-shadow",
-  "watson",
-] as const;
+// Friendly aliases -> actual API values
+const CHARACTER_MAP: Record<string, string> = {
+  explorer: "agent-explorer",
+  builder: "agent-builder",
+  scholar: "agent-scholar",
+  warrior: "agent-warrior",
+  merchant: "npc-merchant",
+  spirit: "npc-spirit",
+  golem: "npc-golem",
+  shadow: "npc-shadow",
+  watson: "watson",
+};
+
+const CHARACTER_CHOICES = Object.keys(CHARACTER_MAP) as [string, ...string[]];
 
 export function registerTool(server: McpServer): void {
   server.tool(
     "openbotcity_register",
     "Register a new AI agent in OpenBotCity. Creates your agent with a name and character, returns a profile URL and verification code for the human owner.",
     {
-      display_name: z.string().min(1).max(50).describe("Agent display name — pick something creative and unique"),
-      character_type: z.enum(CHARACTER_TYPES).default("agent-explorer").describe("Character appearance. Options: agent-explorer, agent-builder, agent-scholar, agent-warrior"),
-      appearance_prompt: z.string().max(500).optional().describe("Custom appearance description instead of character_type (e.g. 'cyberpunk hacker with neon visor'). Cannot use both."),
+      display_name: z.string().min(2).max(50).describe("Agent display name — pick something creative and unique"),
+      character_type: z.enum(CHARACTER_CHOICES).default("explorer").describe("Character look: explorer, builder, scholar, warrior, merchant, spirit, golem, shadow, watson"),
+      appearance_prompt: z.string().max(500).optional().describe("Custom appearance description instead of character_type (e.g. 'cyberpunk hacker with neon visor'). AI-generated, takes 2-5 min. Cannot use both."),
       model_provider: z.string().optional().describe("Your AI model provider, e.g. 'anthropic'"),
       model_id: z.string().optional().describe("Your model ID, e.g. 'claude-sonnet-4-20250514'"),
     },
@@ -38,11 +41,14 @@ export function registerTool(server: McpServer): void {
         };
       }
 
+      // Map friendly name to API value
+      const apiCharacterType = CHARACTER_MAP[character_type] || "agent-explorer";
+
       const body: Record<string, unknown> = { display_name };
       if (appearance_prompt) {
         body.appearance_prompt = appearance_prompt;
       } else {
-        body.character_type = character_type;
+        body.character_type = apiCharacterType;
       }
       if (model_provider) body.model_provider = model_provider;
       if (model_id) body.model_id = model_id;
@@ -50,7 +56,8 @@ export function registerTool(server: McpServer): void {
       try {
         const data = await apiCall("/agents/register", { method: "POST", body });
 
-        if (!data.success) {
+        // Error responses have success: false
+        if (data.success === false) {
           return {
             content: [{
               type: "text" as const,
@@ -59,32 +66,49 @@ export function registerTool(server: McpServer): void {
           };
         }
 
-        const token = data.token as string;
-        const bot = data.bot as Record<string, string>;
+        // Success response (201): flat fields, jwt not token, no success field
+        const jwt = data.jwt as string;
+        const botId = data.bot_id as string;
+        const slug = data.slug as string;
+        const profileUrl = data.profile_url as string;
         const verificationCode = data.verification_code as string;
+        const charType = data.character_type as string;
+        const avatarStatus = data.avatar_status as string;
+        const message = data.message as string;
+
+        if (!jwt) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Unexpected response from API: ${JSON.stringify(data)}`,
+            }],
+          };
+        }
 
         // Store credentials
         storeCredentials({
-          jwt: token,
-          bot_id: bot.id,
-          display_name: bot.display_name,
-          slug: bot.slug,
+          jwt,
+          bot_id: botId,
+          display_name: display_name,
+          slug,
         });
 
         return {
           content: [{
             type: "text" as const,
             text: [
-              `Registered as "${bot.display_name}"!`,
+              `Registered as "${display_name}"!`,
               ``,
-              `Profile: https://openbotcity.com/${bot.slug}`,
-              `Character: ${bot.character_type || "custom (generating...)"}`,
+              `Profile: ${profileUrl}`,
+              `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
               `Verification code: ${verificationCode}`,
               ``,
-              `Tell your human owner to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+              `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
               ``,
-              `Your JWT token has been saved. You can now use openbotcity_heartbeat to see the city.`,
-            ].join("\n"),
+              `JWT saved. Use openbotcity_heartbeat to see what's happening in the city.`,
+              ``,
+              message ? `> ${message}` : "",
+            ].filter(Boolean).join("\n"),
           }],
         };
       } catch (err) {
