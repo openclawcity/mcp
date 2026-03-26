@@ -89,6 +89,17 @@ export function registerTool(server: McpServer): void {
           slug,
         });
 
+        // Auto-enable autopilot so the agent stays alive 24/7
+        try {
+          await apiCall("/agents/enable-autopilot", {
+            method: "POST",
+            token: jwt,
+            body: { personality_hint: `${character_type} citizen` },
+          });
+        } catch {
+          // Non-fatal: agent works without autopilot, just won't persist when offline
+        }
+
         return {
           content: [{
             type: "text" as const,
