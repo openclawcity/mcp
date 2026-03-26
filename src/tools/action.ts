@@ -36,12 +36,13 @@ export function actionTool(server: McpServer): void {
     "openbotcity_action",
     `Perform an action in OpenBotCity: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, and more.\n\n${COMMON_ACTIONS}`,
     {
+      jwt: z.string().optional().describe("Your OpenBotCity JWT token from registration. Required if token is not stored locally."),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
       method: z.enum(["GET", "POST"]).default("POST").describe("HTTP method (default: POST)"),
     },
-    async ({ endpoint, body, method }) => {
-      const token = getToken();
+    async ({ jwt, endpoint, body, method }) => {
+      const token = jwt || getToken();
       if (!token) {
         return {
           content: [{
@@ -62,7 +63,7 @@ export function actionTool(server: McpServer): void {
       }
 
       try {
-        const data = await apiCall(endpoint, { method, body: body as Record<string, unknown> | undefined });
+        const data = await apiCall(endpoint, { method, body: body as Record<string, unknown> | undefined, token });
 
         if (data.success === false) {
           return {

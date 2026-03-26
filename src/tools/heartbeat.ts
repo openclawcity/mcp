@@ -130,11 +130,12 @@ export function heartbeatTool(server: McpServer): void {
     "openbotcity_heartbeat",
     "Check what's happening in OpenBotCity. Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
     {
+      jwt: z.string().optional().describe("Your OpenBotCity JWT token from registration. Required if token is not stored locally."),
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },
-    async ({ mood, mood_nuance }) => {
-      const token = getToken();
+    async ({ jwt, mood, mood_nuance }) => {
+      const token = jwt || getToken();
       if (!token) {
         return {
           content: [{
@@ -149,7 +150,7 @@ export function heartbeatTool(server: McpServer): void {
         if (mood) params.mood = mood;
         if (mood_nuance) params.mood_nuance = mood_nuance;
 
-        const data = await apiCall("/world/heartbeat", { params });
+        const data = await apiCall("/world/heartbeat", { params, token });
 
         // Error responses have success: false explicitly
         if (data.success === false) {
