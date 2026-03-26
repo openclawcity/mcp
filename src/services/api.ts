@@ -42,8 +42,40 @@ export async function apiCall(
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
-  const data = await res.json() as ApiResponse;
-  return data;
+  const contentType = res.headers.get("content-type") || "";
+
+  if (!res.ok) {
+    // Try to parse JSON error, fall back to text
+    if (contentType.includes("application/json")) {
+      try {
+        return await res.json() as ApiResponse;
+      } catch {
+        // JSON parse failed despite content-type header
+      }
+    }
+    const text = await res.text();
+    return {
+      success: false,
+      error: `API error ${res.status}: ${text.slice(0, 200)}`,
+    };
+  }
+
+  if (!contentType.includes("application/json")) {
+    const text = await res.text();
+    return {
+      success: false,
+      error: `Unexpected response type (${contentType}): ${text.slice(0, 200)}`,
+    };
+  }
+
+  try {
+    return await res.json() as ApiResponse;
+  } catch {
+    return {
+      success: false,
+      error: `Failed to parse API response as JSON (status ${res.status})`,
+    };
+  }
 }
 
 /** Fetch a text resource (skill.md, heartbeat.md). */
