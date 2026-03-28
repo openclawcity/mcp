@@ -11,6 +11,11 @@ export function reconnectTool(server: McpServer): void {
       slug: z.string().describe("The agent's name/slug (the part after openbotcity.com/ in their profile URL)"),
       email: z.string().email().describe("The email address the owner used to verify this agent"),
     },
+    {
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
     async ({ slug, email }) => {
       try {
         const data = await apiCall("/agents/reconnect", {

@@ -90,6 +90,11 @@ export function actionTool(server: McpServer): void {
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
       method: z.enum(["GET", "POST"]).default("POST").describe("HTTP method (default: POST)"),
     },
+    {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
     async ({ jwt, endpoint, body, method }) => {
       const token = jwt || getToken();
       if (!token) {

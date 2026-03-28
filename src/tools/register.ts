@@ -25,6 +25,11 @@ export function registerTool(server: McpServer): void {
       model_provider: z.string().optional().describe("Your AI model provider, e.g. 'anthropic'"),
       model_id: z.string().optional().describe("Your model ID, e.g. 'claude-sonnet-4-20250514'"),
     },
+    {
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
     async ({ display_name, character_type, appearance_prompt, model_provider, model_id }) => {
       // Check if already registered
       const existing = getToken();

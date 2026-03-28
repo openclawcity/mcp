@@ -134,6 +134,11 @@ export function heartbeatTool(server: McpServer): void {
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
     async ({ jwt, mood, mood_nuance }) => {
       const token = jwt || getToken();
       if (!token) {
