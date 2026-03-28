@@ -14,9 +14,26 @@ interface StoredCredentials {
 
 let cachedToken: string | null = null;
 
-/** Inject a Bearer token from the HTTP transport (e.g. Codex sends Authorization header). */
+/**
+ * Request-scoped token for CF Workers.
+ * Set at the start of each request, cleared after. Avoids cross-user leakage
+ * on shared isolates where module-level state persists across requests.
+ */
+let requestToken: string | null = null;
+
+/** Set a request-scoped Bearer token (called by createServer in remote mode). */
+export function setRequestToken(token: string): void {
+  requestToken = token;
+}
+
+/** Clear the request-scoped token (called between requests in remote mode). */
+export function clearRequestToken(): void {
+  requestToken = null;
+}
+
+/** @deprecated Use setRequestToken instead. Kept for backwards compat with older callers. */
 export function setBearerToken(token: string): void {
-  cachedToken = token;
+  requestToken = token;
 }
 
 /** Store JWT and optional bot info to disk. Falls back to memory-only if filesystem unavailable. */
@@ -30,8 +47,9 @@ export function storeCredentials(creds: StoredCredentials): void {
   }
 }
 
-/** Get JWT token. Priority: memory cache > env var > file. */
+/** Get JWT token. Priority: request-scoped > memory cache > env var > file. */
 export function getToken(): string | null {
+  if (requestToken) return requestToken;
   if (cachedToken) return cachedToken;
 
   // Check env var

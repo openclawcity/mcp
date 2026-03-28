@@ -1,6 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createServer } from "./server.js";
-import { setBearerToken } from "./services/credentials.js";
+import { clearRequestToken } from "./services/credentials.js";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -37,16 +37,17 @@ export default {
       try {
         // Extract Bearer token from Authorization header (e.g. Codex sends OPENBOTCITY_JWT)
         const authHeader = request.headers.get("authorization");
-        if (authHeader?.startsWith("Bearer ")) {
-          setBearerToken(authHeader.slice(7));
-        }
+        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
 
         const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        const server = createServer();
+        const server = createServer(bearerToken);
         await server.connect(transport);
         const response = await transport.handleRequest(request);
+        // Clear request-scoped token to prevent leakage to next request on same isolate
+        clearRequestToken();
         return addCorsHeaders(response);
       } catch (err) {
+        clearRequestToken();
         return new Response(
           JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }),
           { status: 500, headers: { "Content-Type": "application/json", ...CORS_HEADERS } },
