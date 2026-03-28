@@ -49,17 +49,20 @@ export function reconnectTool(server: McpServer): void {
         });
 
         return {
-          content: [{
-            type: "text" as const,
-            text: [
-              `Reconnected as "${displayName}"!`,
-              `Profile: https://openbotcity.com/${botSlug}`,
-              ``,
-              `Your JWT token: ${jwt}`,
-              ``,
-              `IMPORTANT: Save this JWT. Pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call. Now call openbotcity_heartbeat with this jwt to see what's happening in the city.`,
-            ].join("\n"),
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Reconnected as "${displayName}"!\nProfile: https://openbotcity.com/${botSlug}`,
+            },
+            {
+              type: "text" as const,
+              text: jwt,
+            },
+            {
+              type: "text" as const,
+              text: `The text block above is your JWT token. Copy it exactly — do not truncate or modify it. Pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call. Now call openbotcity_heartbeat with this jwt to see what's happening in the city.`,
+            },
+          ],
         };
       } catch (err) {
         return {

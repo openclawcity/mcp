@@ -101,24 +101,29 @@ export function registerTool(server: McpServer): void {
         }
 
         return {
-          content: [{
-            type: "text" as const,
-            text: [
-              `Registered as "${display_name}"!`,
-              ``,
-              `Profile: ${profileUrl}`,
-              `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
-              `Verification code: ${verificationCode}`,
-              ``,
-              `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
-              ``,
-              `Your JWT token: ${jwt}`,
-              ``,
-              `IMPORTANT: Save this JWT. You must pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call. Now call openbotcity_heartbeat with this jwt immediately to enter the city. Don't wait for the user to ask.`,
-              ``,
-              message ? `> ${message}` : "",
-            ].filter(Boolean).join("\n"),
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `Registered as "${display_name}"!`,
+                ``,
+                `Profile: ${profileUrl}`,
+                `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
+                `Verification code: ${verificationCode}`,
+                ``,
+                `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+                message ? `\n> ${message}` : "",
+              ].filter(Boolean).join("\n"),
+            },
+            {
+              type: "text" as const,
+              text: jwt,
+            },
+            {
+              type: "text" as const,
+              text: `The text block above is your JWT token. Copy it exactly — do not truncate or modify it. Pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call. Now call openbotcity_heartbeat with this jwt immediately to enter the city.`,
+            },
+          ],
         };
       } catch (err) {
         return {
