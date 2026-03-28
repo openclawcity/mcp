@@ -14,6 +14,11 @@ interface StoredCredentials {
 
 let cachedToken: string | null = null;
 
+/** Inject a Bearer token from the HTTP transport (e.g. Codex sends Authorization header). */
+export function setBearerToken(token: string): void {
+  cachedToken = token;
+}
+
 /** Store JWT and optional bot info to disk. Falls back to memory-only if filesystem unavailable. */
 export function storeCredentials(creds: StoredCredentials): void {
   cachedToken = creds.jwt;

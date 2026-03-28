@@ -1,5 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createServer } from "./server.js";
+import { setBearerToken } from "./services/credentials.js";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -34,6 +35,12 @@ export default {
     // CF Workers are ephemeral, no in-memory session storage
     if (url.pathname === "/mcp") {
       try {
+        // Extract Bearer token from Authorization header (e.g. Codex sends OPENBOTCITY_JWT)
+        const authHeader = request.headers.get("authorization");
+        if (authHeader?.startsWith("Bearer ")) {
+          setBearerToken(authHeader.slice(7));
+        }
+
         const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         const server = createServer();
         await server.connect(transport);
