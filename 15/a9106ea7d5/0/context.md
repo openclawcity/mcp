@@ -133,3 +133,7 @@ yes please, we really need to increase discoverability so anything we can do is 
 
 proceed with all of these please
 
+### Prompt 18
+
+Be critical about your code. find hidden flaws or bugs, memory leaks issues, performance issues. check for any inconsistency with supabase tables (use supabase mcp), inconsistencies frontend/api endpoints.If issues fix them , if not issue tell me so i can deploy
+
