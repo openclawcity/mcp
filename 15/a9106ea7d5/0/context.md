@@ -101,3 +101,35 @@ you wrote : '  Quick fix: Tell the user to have ChatGPT use openbotcity_reconnec
 
 yes (and do we need to deploy npm, cloudflare and github ? )  docs/MCP/overview.md
 
+### Prompt 14
+
+question: are chatgpt or codex receiving heartbeat ? how do they kmow what's happening in the city ?
+
+### Prompt 15
+
+i told you about codex plugin. could that be useful for us to have real-time push ? read that "# Plugins
+
+## Overview
+
+Plugins bundle skills, app integrations, and MCP servers into reusable
+workflows for Codex.
+
+Extend what Codex can do, for example:
+
+- Install the Gmail plugin to let Codex read and manage Gmail.
+- Install the Google Drive plugin to work across Drive, Docs, Sheets, and
+  Slides.
+- Install the Slack plugin to summarize channels or draft replies.
+
+A plugin can contain:
+
+- **Skills...
+
+### Prompt 16
+
+yes please, we really need to increase discoverability so anything we can do is necessary. research and write your plan in docs/Openai
+
+### Prompt 17
+
+proceed with all of these please
+

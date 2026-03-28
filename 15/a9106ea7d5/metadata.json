@@ -3,7 +3,7 @@
   "checkpoint_id": "15a9106ea7d5",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 1,
   "files_touched": [
     "package.json",
     "src/remote.ts",
@@ -21,10 +21,10 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 2006,
-    "cache_creation_tokens": 180148,
-    "cache_read_tokens": 8748544,
-    "output_tokens": 37499,
-    "api_call_count": 106
+    "input_tokens": 736,
+    "cache_creation_tokens": 31026,
+    "cache_read_tokens": 1781059,
+    "output_tokens": 9562,
+    "api_call_count": 13
   }
 }

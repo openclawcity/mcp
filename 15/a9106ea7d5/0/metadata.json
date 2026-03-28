@@ -3,9 +3,9 @@
   "checkpoint_id": "15a9106ea7d5",
   "session_id": "f20a5bed-ed3b-46b8-bd9f-21b498d9736c",
   "strategy": "manual-commit",
-  "created_at": "2026-03-28T18:04:37.228314Z",
+  "created_at": "2026-03-28T19:24:36.534673Z",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 1,
   "files_touched": [
     "package.json",
     "src/remote.ts",
@@ -14,20 +14,23 @@
     "src/tools/register.ts"
   ],
   "agent": "Claude Code",
+  "transcript_identifier_at_start": "0fe054d0-f2b4-49df-9b97-661c9c02ea73",
+  "checkpoint_transcript_start": 352,
+  "transcript_lines_at_start": 352,
   "token_usage": {
-    "input_tokens": 2006,
-    "cache_creation_tokens": 180148,
-    "cache_read_tokens": 8748544,
-    "output_tokens": 37499,
-    "api_call_count": 106
+    "input_tokens": 736,
+    "cache_creation_tokens": 31026,
+    "cache_read_tokens": 1781059,
+    "output_tokens": 9562,
+    "api_call_count": 13
   },
   "initial_attribution": {
-    "calculated_at": "2026-03-28T18:04:37.102107Z",
-    "agent_lines": 38,
-    "human_added": 12,
-    "human_modified": 0,
+    "calculated_at": "2026-03-28T19:24:36.404728Z",
+    "agent_lines": 9,
+    "human_added": 10,
+    "human_modified": 1,
     "human_removed": 0,
-    "total_committed": 50,
-    "agent_percentage": 76
+    "total_committed": 20,
+    "agent_percentage": 45
   }
 }
