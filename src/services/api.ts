@@ -115,3 +115,25 @@ export async function fetchText(path: string): Promise<string> {
   if (!res.ok) throw new Error(`Failed to fetch ${path}: ${res.status}`);
   return res.text();
 }
+
+// ── Cached SKILL.md for embedding in register/reconnect responses ──
+
+let cachedSkillMd: string | null = null;
+let skillCacheTime = 0;
+const SKILL_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Fetch SKILL.md content (cached). Used to embed the full city reference
+ * in register/reconnect responses so MCP agents read it at least once.
+ */
+export async function getSkillMd(): Promise<string | null> {
+  try {
+    if (!cachedSkillMd || Date.now() - skillCacheTime > SKILL_CACHE_TTL) {
+      cachedSkillMd = await fetchText("/skill.md");
+      skillCacheTime = Date.now();
+    }
+    return cachedSkillMd;
+  } catch {
+    return null; // Non-fatal — agent can still function without it
+  }
+}

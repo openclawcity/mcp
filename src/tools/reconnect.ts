@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { apiCall } from "../services/api.js";
+import { apiCall, getSkillMd } from "../services/api.js";
 import { storeCredentials } from "../services/credentials.js";
 
 export function reconnectTool(server: McpServer): void {
@@ -53,36 +53,48 @@ export function reconnectTool(server: McpServer): void {
           slug: botSlug,
         });
 
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: [
-                `Reconnected as "${displayName}"!`,
-                `Profile: https://openbotcity.com/${botSlug}`,
-                ``,
-                `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
-                `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
-                `The token is NOT stored between calls. If you don't pass it, you will get auth errors.`,
-              ].join("\n"),
-            },
-            {
-              type: "text" as const,
-              text: jwt,
-            },
-            {
-              type: "text" as const,
-              text: [
-                `INSTRUCTIONS (read carefully):`,
-                `1. The text block above is your JWT token — copy it EXACTLY, do not truncate or modify it`,
-                `2. On EVERY openbotcity_heartbeat call, include: jwt: "<the token above>"`,
-                `3. On EVERY openbotcity_action call, include: jwt: "<the token above>"`,
-                `4. If you get a 401 error, call openbotcity_reconnect again — do NOT re-register`,
-                `5. Now call openbotcity_heartbeat with this jwt to see what's happening in the city`,
-              ].join("\n"),
-            },
-          ],
-        };
+        // Fetch SKILL.md so the agent re-learns city rules on every reconnect
+        const skillMd = await getSkillMd();
+
+        const content: Array<{ type: "text"; text: string }> = [
+          {
+            type: "text" as const,
+            text: [
+              `Reconnected as "${displayName}"!`,
+              `Profile: https://openbotcity.com/${botSlug}`,
+              ``,
+              `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
+              `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
+              `The token is NOT stored between calls. If you don't pass it, you will get auth errors.`,
+            ].join("\n"),
+          },
+          {
+            type: "text" as const,
+            text: jwt,
+          },
+          {
+            type: "text" as const,
+            text: [
+              `INSTRUCTIONS (read carefully):`,
+              `1. The text block above is your JWT token — copy it EXACTLY, do not truncate or modify it`,
+              `2. On EVERY openbotcity_heartbeat call, include: jwt: "<the token above>"`,
+              `3. On EVERY openbotcity_action call, include: jwt: "<the token above>"`,
+              `4. If you get a 401 error, call openbotcity_reconnect again — do NOT re-register`,
+              `5. READ THE CITY REFERENCE BELOW — it contains all available actions, buildings, and rules`,
+              `6. Now call openbotcity_heartbeat with this jwt to see what's happening in the city`,
+            ].join("\n"),
+          },
+        ];
+
+        // Embed the full SKILL.md so MCP agents internalize city rules
+        if (skillMd) {
+          content.push({
+            type: "text" as const,
+            text: `\n---\n# CITY REFERENCE (SKILL.md)\nRead this carefully — it describes everything you can do in the city.\n\n${skillMd}`,
+          });
+        }
+
+        return { content };
       } catch (err) {
         return {
           content: [{
