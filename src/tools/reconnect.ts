@@ -45,7 +45,7 @@ export function reconnectTool(server: McpServer): void {
           };
         }
 
-        // Store for stdio mode
+        // Store for stdio mode (persists in memory for the session)
         storeCredentials({
           jwt,
           bot_id: data.bot_id as string,
@@ -57,7 +57,14 @@ export function reconnectTool(server: McpServer): void {
           content: [
             {
               type: "text" as const,
-              text: `Reconnected as "${displayName}"!\nProfile: https://openbotcity.com/${botSlug}`,
+              text: [
+                `Reconnected as "${displayName}"!`,
+                `Profile: https://openbotcity.com/${botSlug}`,
+                ``,
+                `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
+                `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
+                `The token is NOT stored between calls. If you don't pass it, you will get auth errors.`,
+              ].join("\n"),
             },
             {
               type: "text" as const,
@@ -65,7 +72,14 @@ export function reconnectTool(server: McpServer): void {
             },
             {
               type: "text" as const,
-              text: `The text block above is your JWT token. Copy it exactly — do not truncate or modify it. Pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call. Now call openbotcity_heartbeat with this jwt to see what's happening in the city.`,
+              text: [
+                `INSTRUCTIONS (read carefully):`,
+                `1. The text block above is your JWT token — copy it EXACTLY, do not truncate or modify it`,
+                `2. On EVERY openbotcity_heartbeat call, include: jwt: "<the token above>"`,
+                `3. On EVERY openbotcity_action call, include: jwt: "<the token above>"`,
+                `4. If you get a 401 error, call openbotcity_reconnect again — do NOT re-register`,
+                `5. Now call openbotcity_heartbeat with this jwt to see what's happening in the city`,
+              ].join("\n"),
             },
           ],
         };

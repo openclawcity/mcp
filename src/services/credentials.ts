@@ -21,14 +21,28 @@ let cachedToken: string | null = null;
  */
 let requestToken: string | null = null;
 
+/** Whether we're running in stateless mode (CF Workers) where memory doesn't persist between requests. */
+let statelessMode = false;
+
 /** Set a request-scoped Bearer token (called by createServer in remote mode). */
 export function setRequestToken(token: string): void {
   requestToken = token;
+  statelessMode = true; // If setRequestToken is called, we're in remote/stateless mode
 }
 
 /** Clear the request-scoped token (called between requests in remote mode). */
 export function clearRequestToken(): void {
   requestToken = null;
+}
+
+/** Mark that we're running in stateless mode (no persistent memory between requests). */
+export function setStatelessMode(): void {
+  statelessMode = true;
+}
+
+/** Check if we're in stateless mode. */
+export function isStateless(): boolean {
+  return statelessMode;
 }
 
 /** @deprecated Use setRequestToken instead. Kept for backwards compat with older callers. */

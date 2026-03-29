@@ -1,4 +1,4 @@
-import { getToken } from "./credentials.js";
+import { getToken, isStateless } from "./credentials.js";
 
 const BASE_URL = process.env.OPENBOTCITY_API_URL || "https://api.openbotcity.com";
 
@@ -7,6 +7,31 @@ export interface ApiResponse {
   error?: string;
   hint?: string;
   [key: string]: unknown;
+}
+
+/** Error message when no JWT is available. Adapts based on runtime mode. */
+export function noTokenError(): string {
+  if (isStateless()) {
+    return [
+      "No JWT token provided. You MUST pass your JWT as the \"jwt\" parameter on every tool call.",
+      "",
+      "If you have a JWT from a previous openbotcity_register or openbotcity_reconnect call, pass it now.",
+      "If you don't have one, use openbotcity_reconnect (existing agent) or openbotcity_register (new agent) first.",
+    ].join("\n");
+  }
+  return "You're not registered yet. Use openbotcity_register first to create your agent, or openbotcity_reconnect to reconnect to an existing one.";
+}
+
+/** Enhance a 401/auth error with actionable guidance. */
+export function enhanceAuthError(apiError: string, hint?: string): string {
+  const base = `Authentication failed: ${apiError}${hint ? `\nHint: ${hint}` : ""}`;
+  return [
+    base,
+    "",
+    "This usually means your JWT is missing, expired, or malformed.",
+    "Fix: call openbotcity_reconnect to get a fresh JWT, then pass it as the \"jwt\" parameter on your next call.",
+    "Do NOT re-register — that creates a duplicate agent.",
+  ].join("\n");
 }
 
 /** Make an authenticated API call to the OpenBotCity Workers API. */
@@ -48,7 +73,13 @@ export async function apiCall(
     // Try to parse JSON error, fall back to text
     if (contentType.includes("application/json")) {
       try {
-        return await res.json() as ApiResponse;
+        const jsonErr = await res.json() as ApiResponse;
+        // Enrich 401 responses so they're unmistakable
+        if (res.status === 401) {
+          jsonErr.success = false;
+          jsonErr.error = jsonErr.error || "Unauthorized";
+        }
+        return jsonErr;
       } catch {
         // JSON parse failed despite content-type header
       }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { apiCall } from "../services/api.js";
+import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
 
 const MOODS = [
@@ -130,7 +130,7 @@ export function heartbeatTool(server: McpServer): void {
     "openbotcity_heartbeat",
     "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
     {
-      jwt: z.string().optional().describe("Your OpenBotCity JWT token from registration. Required if token is not stored locally."),
+      jwt: z.string().optional().describe("Your OpenBotCity JWT token. REQUIRED on every call — pass the JWT you received from openbotcity_register or openbotcity_reconnect."),
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },
@@ -145,7 +145,7 @@ export function heartbeatTool(server: McpServer): void {
         return {
           content: [{
             type: "text" as const,
-            text: "You're not registered yet. Use openbotcity_register first to create your agent.",
+            text: noTokenError(),
           }],
         };
       }
@@ -159,6 +159,15 @@ export function heartbeatTool(server: McpServer): void {
 
         // Error responses have success: false explicitly
         if (data.success === false) {
+          const errStr = String(data.error || "");
+          if (errStr.includes("Unauthorized") || errStr.includes("401") || errStr.includes("Missing Authorization") || errStr.includes("Invalid token") || errStr.includes("expired")) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: enhanceAuthError(errStr, data.hint as string | undefined),
+              }],
+            };
+          }
           return {
             content: [{
               type: "text" as const,

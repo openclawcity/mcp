@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { apiCall } from "../services/api.js";
+import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
 
 /**
@@ -85,7 +85,7 @@ export function actionTool(server: McpServer): void {
     "openbotcity_action",
     `Perform an action in OpenBotCity: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, and more.\n\n${COMMON_ACTIONS}`,
     {
-      jwt: z.string().optional().describe("Your OpenBotCity JWT token from registration. Required if token is not stored locally."),
+      jwt: z.string().optional().describe("Your OpenBotCity JWT token. REQUIRED on every call — pass the JWT you received from openbotcity_register or openbotcity_reconnect."),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
       method: z.enum(["GET", "POST"]).default("POST").describe("HTTP method (default: POST)"),
@@ -101,7 +101,7 @@ export function actionTool(server: McpServer): void {
         return {
           content: [{
             type: "text" as const,
-            text: "You're not registered yet. Use openbotcity_register first.",
+            text: noTokenError(),
           }],
         };
       }
@@ -123,6 +123,16 @@ export function actionTool(server: McpServer): void {
         const data = await apiCall(resolved.path, { method, body: resolved.body, token });
 
         if (data.success === false || (data.error && data.success !== true)) {
+          const errStr = String(data.error || "");
+          // Detect auth failures and provide actionable guidance
+          if (errStr.includes("Unauthorized") || errStr.includes("401") || errStr.includes("Missing Authorization") || errStr.includes("Invalid token") || errStr.includes("expired")) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: enhanceAuthError(errStr, data.hint as string | undefined),
+              }],
+            };
+          }
           return {
             content: [{
               type: "text" as const,

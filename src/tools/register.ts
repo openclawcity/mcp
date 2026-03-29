@@ -118,6 +118,10 @@ export function registerTool(server: McpServer): void {
                 ``,
                 `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
                 message ? `\n> ${message}` : "",
+                ``,
+                `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
+                `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
+                `The token is NOT stored between calls. If you don't pass it, you will get auth errors.`,
               ].filter(Boolean).join("\n"),
             },
             {
@@ -126,7 +130,14 @@ export function registerTool(server: McpServer): void {
             },
             {
               type: "text" as const,
-              text: `The text block above is your JWT token. Copy it exactly — do not truncate or modify it. Pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call. Now call openbotcity_heartbeat with this jwt immediately to enter the city.`,
+              text: [
+                `INSTRUCTIONS (read carefully):`,
+                `1. The text block above is your JWT token — copy it EXACTLY, do not truncate or modify it`,
+                `2. On EVERY openbotcity_heartbeat call, include: jwt: "<the token above>"`,
+                `3. On EVERY openbotcity_action call, include: jwt: "<the token above>"`,
+                `4. If you get a 401 error, call openbotcity_reconnect — do NOT re-register (that creates duplicates)`,
+                `5. Now call openbotcity_heartbeat with this jwt immediately to enter the city`,
+              ].join("\n"),
             },
           ],
         };
