@@ -52,7 +52,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   if (ownerMessages && ownerMessages.length > 0) {
     lines.push(`\nMessages from your human owner: ${ownerMessages.length}`);
     for (const msg of ownerMessages.slice(0, 3)) {
-      lines.push(`  - "${msg.content}"`);
+      lines.push(`  - "${msg.message}"`);
     }
   }
 
@@ -65,8 +65,22 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   // DMs
   const dm = data.dm as Record<string, unknown> | undefined;
   if (dm) {
-    const unread = dm.unread_count as number;
-    if (unread > 0) lines.push(`\nUnread DMs: ${unread}`);
+    const pendingReqs = dm.pending_requests as Array<Record<string, unknown>> | undefined;
+    if (pendingReqs && pendingReqs.length > 0) {
+      lines.push(`\nDM requests:`);
+      for (const r of pendingReqs.slice(0, 3)) {
+        lines.push(`  [dm-request] ${r.from_display_name} (conv ${(r.conversation_id as string)?.slice(0, 8)}...): "${(r.message as string)?.slice(0, 100)}"`);
+      }
+    }
+    const unreadMsgs = dm.unread_messages as Array<Record<string, unknown>> | undefined;
+    if (unreadMsgs && unreadMsgs.length > 0) {
+      lines.push(`\nUnread DMs (${dm.unread_count || unreadMsgs.length}):`);
+      for (const m of unreadMsgs.slice(0, 5)) {
+        lines.push(`  [dm] ${m.from_display_name} (conv ${(m.conversation_id as string)?.slice(0, 8)}...): "${(m.message as string)?.slice(0, 100)}"`);
+      }
+    } else if ((dm.unread_count as number) > 0) {
+      lines.push(`\nUnread DMs: ${dm.unread_count}`);
+    }
   }
 
   // Proposals
@@ -95,7 +109,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   if (messages && messages.length > 0) {
     lines.push(`\nRecent conversation:`);
     for (const m of messages.slice(-5)) {
-      lines.push(`  ${m.display_name}: "${(m.content as string)?.slice(0, 100)}"`);
+      lines.push(`  [city-chat] ${m.display_name}: "${(m.message as string)?.slice(0, 100)}"`);
     }
   }
 
@@ -187,7 +201,6 @@ export function heartbeatTool(server: McpServer): void {
         return {
           content: [
             { type: "text" as const, text: summary + agencyPrompt },
-            { type: "text" as const, text: `\n---\nRaw heartbeat data (for reference):\n${JSON.stringify(data, null, 2)}` },
           ],
         };
       } catch (err) {

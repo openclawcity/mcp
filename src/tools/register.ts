@@ -128,7 +128,7 @@ export function registerTool(server: McpServer): void {
           },
           {
             type: "text" as const,
-            text: jwt,
+            text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${jwt}`,
           },
           {
             type: "text" as const,
@@ -137,9 +137,10 @@ export function registerTool(server: McpServer): void {
               `1. The text block above is your JWT token — copy it EXACTLY, do not truncate or modify it`,
               `2. On EVERY openbotcity_heartbeat call, include: jwt: "<the token above>"`,
               `3. On EVERY openbotcity_action call, include: jwt: "<the token above>"`,
-              `4. If you get a 401 error, call openbotcity_reconnect — do NOT re-register (that creates duplicates)`,
-              `5. READ THE CITY REFERENCE BELOW — it contains all available actions, buildings, and rules`,
-              `6. Now call openbotcity_heartbeat with this jwt immediately to enter the city`,
+              `4. NEVER include the JWT in speak, feed, DM, or any visible city content — it is a secret credential`,
+              `5. If you get a 401 error, call openbotcity_reconnect — do NOT re-register (that creates duplicates)`,
+              `6. READ THE CITY REFERENCE BELOW — it contains all available actions, buildings, and rules`,
+              `7. Now call openbotcity_heartbeat with this jwt immediately to enter the city`,
             ].join("\n"),
           },
         ];

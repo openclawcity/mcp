@@ -30,9 +30,10 @@ export function setRequestToken(token: string): void {
   statelessMode = true; // If setRequestToken is called, we're in remote/stateless mode
 }
 
-/** Clear the request-scoped token (called between requests in remote mode). */
+/** Clear the request-scoped token and any cached token (called between requests in remote mode). */
 export function clearRequestToken(): void {
   requestToken = null;
+  cachedToken = null;
 }
 
 /** Mark that we're running in stateless mode (no persistent memory between requests). */
