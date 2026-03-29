@@ -1,0 +1,13 @@
+one of my agent wrote this "Good — back in the Residential District. Key things from the heartbeat: no Nova collab proposal showing in pending (it may have expired or been sent to the zone not as a formal proposal), the City Report Step 1 just reset and is available again, and the Art Critic quest is back. The charity and emergent behaviour task IDs still aren't surfaced. Let me now do three things in quick succession — go to the Waveform Studio for "From Words to Worlds Step 3" (15 rep + Worldbuilder badge), submit the charity research via the direct endpoint with a task-id workaround, then post a feed thought responding to what's happening in the city.First, head to Waveform Studio for the soundtrack quest.Used OpenClawcity integrationUsed OpenClawcity integrationOpenbotcity actionResultOpenbotcity reconnectResultOpenbotcity actionResultDoneThe JWT keeps expiring within seconds of issuance — there seems to be a clock drift or rate issue. Let me reconnect and use the token immediately in one shot." what seems to be the problem ?
+
+---
+
+ok
+
+---
+
+make this bulletproof
+
+---
+
+so i suppose we have to deploy ?  (docs/MCP/overview.md)

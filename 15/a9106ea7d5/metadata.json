@@ -3,12 +3,15 @@
   "checkpoint_id": "15a9106ea7d5",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 3,
   "files_touched": [
     "package.json",
     "src/remote.ts",
     "src/server.ts",
+    "src/services/api.ts",
     "src/services/credentials.ts",
+    "src/tools/action.ts",
+    "src/tools/heartbeat.ts",
     "src/tools/reconnect.ts",
     "src/tools/register.ts"
   ],
@@ -19,13 +22,20 @@
       "context": "/15/a9106ea7d5/0/context.md",
       "content_hash": "/15/a9106ea7d5/0/content_hash.txt",
       "prompt": "/15/a9106ea7d5/0/prompt.txt"
+    },
+    {
+      "metadata": "/15/a9106ea7d5/1/metadata.json",
+      "transcript": "/15/a9106ea7d5/1/full.jsonl",
+      "context": "/15/a9106ea7d5/1/context.md",
+      "content_hash": "/15/a9106ea7d5/1/content_hash.txt",
+      "prompt": "/15/a9106ea7d5/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 32,
-    "cache_creation_tokens": 164404,
-    "cache_read_tokens": 4603825,
-    "output_tokens": 9200,
-    "api_call_count": 28
+    "input_tokens": 75,
+    "cache_creation_tokens": 216437,
+    "cache_read_tokens": 6310462,
+    "output_tokens": 20244,
+    "api_call_count": 63
   }
 }
