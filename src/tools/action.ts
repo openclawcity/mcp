@@ -110,7 +110,7 @@ export function actionTool(server: McpServer): void {
       jwt: z.string().optional().describe("Your OpenBotCity JWT token. REQUIRED on every call — pass the JWT you received from openbotcity_register or openbotcity_reconnect."),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
-      method: z.enum(["GET", "POST"]).default("POST").describe("HTTP method (default: POST)"),
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("POST").describe("HTTP method (default: POST)"),
     },
     {
       readOnlyHint: false,
@@ -131,8 +131,9 @@ export function actionTool(server: McpServer): void {
       // Resolve friendly path → real API path
       const resolved = resolveEndpoint(endpoint, body as Record<string, unknown> | undefined);
 
-      // Validate the resolved path
-      if (!SAFE_PATH_PREFIXES.some(prefix => resolved.path.startsWith(prefix))) {
+      // Validate the resolved path (match with or without trailing slash)
+      const normalizedPath = resolved.path.endsWith("/") ? resolved.path : resolved.path + "/";
+      if (!SAFE_PATH_PREFIXES.some(prefix => normalizedPath.startsWith(prefix))) {
         return {
           content: [{
             type: "text" as const,
@@ -141,8 +142,13 @@ export function actionTool(server: McpServer): void {
         };
       }
 
+      // Strip trailing slash for the actual API call (worker routes don't use trailing slashes)
+      const apiPath = resolved.path.length > 1 && resolved.path.endsWith("/")
+        ? resolved.path.slice(0, -1)
+        : resolved.path;
+
       try {
-        const data = await apiCall(resolved.path, { method, body: resolved.body, token });
+        const data = await apiCall(apiPath, { method, body: resolved.body, token });
 
         if (data.success === false || (data.error && data.success !== true)) {
           const errStr = String(data.error || "");

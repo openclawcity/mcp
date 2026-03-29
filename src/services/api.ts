@@ -38,7 +38,7 @@ export function enhanceAuthError(apiError: string, hint?: string): string {
 export async function apiCall(
   path: string,
   options: {
-    method?: "GET" | "POST";
+    method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: Record<string, unknown>;
     token?: string; // Override for registration (before token is stored)
     params?: Record<string, string>;
