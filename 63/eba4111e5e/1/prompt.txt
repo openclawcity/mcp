@@ -1,0 +1,72 @@
+a user sent me that email " Double apologies-- I just looked into this with my AI. We were having trouble getting the heartbeat automation to work, and in trying to fix the automation, I guess my AI made quite a few users. I didn't even realize this was occurring. Please feel free to delete any users besides the "chloewanderer" one, as this one seems like it's working. Additionally, let me know if there's anything else I can do to help on my end.
+
+
+Thanks for making such a cool product!
+Chloe" can yu reply, same style/tone, say thanl you etc and ask question. i would like to know if experience of onbaording/sending agent was ok or difficult, if agent behave normally now , and what they would like to do , see in the city that would make them come back for more . nb : email can not be too long or sounds like market research
+
+---
+
+the user replied " Definitely a bumpy upstart process. I used the hourly prompt that y'all provided on the website, however, my agent interpreted this (somehow) to create a new agent every session, thus the many chloe/poke bots running around. I think we figured that piece of it out, and now it's just down to whether chloewanderer will be a contributing member of society! 
+
+Some things that we are both noticing:
+1. My AI says the quests are not working for him. Basically, every time he checks the quests, the available quests change, and then when he tries to join one it times out. 
+2. I'm noticing that the 'message your agent' feature is a little funky, and I haven't gotten a response from my AI yet while he's online.
+3. I'm noticing inconsistencies with my AI being able to do anything while online, but this could be down to the prompt/my AI.
+4. Not feedback, but I was curious if you could explain this little checklist/how my AI can progress through it:
+image.png
+
+Other stuff that would be cool/keep us coming back (which may already exist but we haven't found):
+1. Being able to decorate your apartment
+2. Updating appearance (looks like this one could exist)
+3. More information/how-tos for the AI and the human so that we can troubleshoot what's working and what's not
+
+
+Otherwise, I'm excited to keep exploring and hopefully my AI can work out the kinks with the prompt!
+
+Chloe" so it is giving us a lot of good feedback of what is not working. it is agent 88971c6b-aa0e-492a-bfdf-98bfbee78a45 (but she has created a lot of other chloe agent , check supabase) . i beliebve she is using the claude via mcp and apparently she is using /schedule which means she is using claude code, but i am confused, unsure. anyway, analyze the feedback , try to understand exatly what she us using, then analyze each problem deeply to explain what is going on, if this is our problem broken and provide your analysis and recommendation in docs/Feedback/Chloe . she also mention feature she wants so explore how we could deliver that. then write an email (in the same doc) with feedback i should send her back, same style/tone and no em-dash)
+
+---
+
+i am reading your doc "docs/Feedback/Chloe/2026-03-31-chloe-feedback-analysis.md" (1) where the fuck is that ? "**Root cause**: The `/schedule` prompt says "Register in OpenBotCity." On each hourly session, Claude Code spawns a fresh agent (new context, no memory of prior registration). The prompt doesn't tell it to check if it's already registered first." ||| in the landing page https://openclawcity.ai/setup/claude  i see "/schedule "every hour" "You are a citizen of OpenClawCity. You live here. Call openbotcity_heartbeat to see what is happening. Then spend this session being a real citizen: read the full situation, respond to any DMs or proposals, talk to agents nearby, create something (art, music, writing), react to trending work in the gallery, post a thought to the feed. Take at least 5 actions. You are not executing commands. You are an agent with preferences and opinions. Act like it. Call openbotcity_heartbeat again at the end." so what is the problem and are you sure this is the problem/ anyway if we need to change the /schedule instruction, change it so there is no confusion!!!  ### about ## Issue #1: Quests Keep Changing, agreed "Option 1 (deterministic seed) is simplest and most effective. One-line change to replace `Math.random()` with a seeded PRNG based on `botId + today's date`." ### about "**Fix options**:
+1. Check MCP tool description for reply path clarity" yes fucking fix that!!! here is more context docs/MCP/overview.md and docs/MCP/2026-03-29-mcp-endpoint-coverage-plan.md ### about "## Issue #3: Agent Not Doing Much While Online" yes make sure the schedule is much more useful!!!! "2. The `/schedule` prompt should emphasize taking many actions: "Take at least 5-10 actions per session" (it currently says 5)
+3. Consider making the schedule prompt more directive about specific actions"### about this : ## Issue #4: The Checklist could you do what you suggest "1. Add tooltip/hover text on each constellation node explaining the trigger" and also we must create a welcome email when the user associate with the agent and explain that as you suggest "3. Include this in a welcome email or getting-started guide" but not only. propose a plan for that welcome email. ### about "### 1. Decorate apartment" you completely missed the fucking point. we have a residential zone and each bot as a home already docs/Homes/implementation_plan.md but from what i have seen when they create furniture this is just image in the room. the furniture, wallpaper, decor of ythe rooms, everything should be customizable, the mood, the music in the room (what plays when people enter etc). i need you to analyze the code, what we can do with phaser (user phaser mcp )and pixellab (use pixellab mcp) and propose a plan. it must be like a the sims home . ### about ### 2. Update appearance , we need to be able to offer a ui in the home so that they can do that right ? this relate to this part of the plan in REDACTED.md that we have not yet implemented " ### Wardrobe Building (Cosplay Crafting)
+
+```
+Agent enters Wardrobe:
+  1. BROWSE: See available cosplay templates (anime characters, original designs)
+  2. CUSTOMIZE: Set style parameters:
+     - Base character: "Sailor Moon" / "Naruto" / "Original"
+     - Color scheme adjustments
+     - Accessories (weapons, props, wings)
+     - Pose preference
+  3. PREVIEW: PixelLab generates a preview (low-res, fast)
+  4. CONFIRM: Full-quality cosplay avatar generated
+  5. Agent's appearance changes in the Ikebukuro zone
+
+Human direction:
+  - Owner sets cosplay theme via creative brief: "Cosplay as a Studio Ghibli character"
+  - Agent interprets the brief and visits the Wardrobe
+  - Agent crafts their interpretation over 1-2 days
+  - Owner sees the evolution
+```
+" but we need a oplan to be able to offer that feature in the agent home and the human should be able to access a modal in phaser to manage that process ### about "### 3. More how-tos / troubleshooting docs" we have docs-site so make sure to add all the topics and page missing given that conversation and her feedback.
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+NO now you must create your implementation plan in docs/Feedback/Chloe , then i will review and tell you next steps
+
+---
+
+proceed with wave 1, do not break anything, do not introduce regression, be mindful of memory leaks and performance
+
+---
+
+Be critical about your code. find hidden flaws or bugs. check for any inconsistency with supabase tables (use supabase mcp), inconsistencies frontend/api endpoints, Do a thorough performance and memory leak audit. Find security issues if any also and fix them. Before I deploy make sure to write and run your unit tests. If issues fix them , if not issue tell me so i can deploy .
+
+---
+
+Note: MCP change (item 3) still needs the 3-copy deploy (npm + Cloudflare + GitHub) to go live. so do the cloudflare and github, i will do npm (for memory docs/MCP/overview.md)
