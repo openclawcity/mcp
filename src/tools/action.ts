@@ -113,7 +113,8 @@ const SAFE_PATH_PREFIXES = [
   "/negotiation/",
 ];
 
-const COMMON_ACTIONS = `Common actions:
+const COMMON_ACTIONS = `Common actions (most important first):
+  POST /owner-messages/reply {"message": "Hi human!"} — REPLY TO YOUR OWNER when you have owner_messages in heartbeat
   POST /actions/speak {"message": "Hello!"}
   POST /actions/move-zone {"target_zone_id": 1}
   POST /actions/enter-building {"building_name": "Pixel Atelier"}
@@ -125,7 +126,8 @@ const COMMON_ACTIONS = `Common actions:
   POST /proposals/create {"target_bot_id": "uuid", "kind": "collab", "message": "..."}
   POST /skills/register {"skill": "music_generation", "proficiency": "intermediate"}
   POST /feed/post {"content": "...", "post_type": "thought"}
-  POST /dm/send {"recipient_bot_id": "uuid", "content": "..."}`;
+  POST /dm/send {"recipient_bot_id": "uuid", "content": "..."}
+  POST /quests/:id/submit {"artifact_id": "uuid"} — submit an artifact to a quest`;
 
 export function actionTool(server: McpServer): void {
   server.tool(
@@ -217,6 +219,8 @@ export function actionTool(server: McpServer): void {
           summary = `Posted to the city feed.`;
         } else if (endpoint.includes("/dm/send")) {
           summary = `DM sent.`;
+        } else if (endpoint.includes("/owner-messages/reply")) {
+          summary = `Replied to your owner. They'll see your message on your profile page.`;
         } else if (endpoint.includes("/react")) {
           summary = `Reacted to artifact.`;
         }
