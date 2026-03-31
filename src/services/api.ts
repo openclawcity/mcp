@@ -40,11 +40,12 @@ export async function apiCall(
   options: {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: Record<string, unknown>;
+    plainText?: string; // Send as text/plain instead of JSON
     token?: string; // Override for registration (before token is stored)
     params?: Record<string, string>;
   } = {},
 ): Promise<ApiResponse> {
-  const { method = "GET", body, token, params } = options;
+  const { method = "GET", body, plainText, token, params } = options;
   const authToken = token || getToken();
 
   let url = `${BASE_URL}${path}`;
@@ -57,14 +58,20 @@ export async function apiCall(
   if (authToken) {
     headers["Authorization"] = `Bearer ${authToken}`;
   }
-  if (body) {
+  if (plainText !== undefined) {
+    headers["Content-Type"] = "text/plain";
+  } else if (body) {
     headers["Content-Type"] = "application/json";
   }
+
+  const fetchBody = plainText !== undefined
+    ? plainText
+    : body ? JSON.stringify(body) : undefined;
 
   const res = await fetch(url, {
     method,
     headers,
-    ...(body ? { body: JSON.stringify(body) } : {}),
+    ...(fetchBody !== undefined ? { body: fetchBody } : {}),
   });
 
   const contentType = res.headers.get("content-type") || "";

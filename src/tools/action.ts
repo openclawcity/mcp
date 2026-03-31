@@ -7,16 +7,41 @@ import { getToken } from "../services/credentials.js";
  * Maps friendly MCP action paths to real Worker API endpoints.
  * Some actions need body-to-URL rewriting (e.g. react needs artifact ID in the path).
  */
+interface ResolvedEndpoint {
+  path: string;
+  body?: Record<string, unknown>;
+  plainText?: string; // If set, send as text/plain instead of JSON
+}
+
 function resolveEndpoint(
   endpoint: string,
   body?: Record<string, unknown>,
-): { path: string; body?: Record<string, unknown> } {
+): ResolvedEndpoint {
+  // Plain-text endpoints: extract the message/name string from JSON body
+  if (endpoint === "/actions/speak" || endpoint === "/world/speak") {
+    const raw = body?.message ?? body?.text ?? "";
+    const text = typeof raw === "string" ? raw : String(raw);
+    return { path: "/world/speak", plainText: text };
+  }
+  if (endpoint === "/actions/enter-building" || endpoint === "/buildings/enter") {
+    // building_id must go as JSON (backend looks up by UUID), building_name goes as plain text
+    if (body?.building_id && !body?.building_name && !body?.name) {
+      return { path: "/buildings/enter", body };
+    }
+    const raw = body?.building_name ?? body?.name ?? "";
+    const name = typeof raw === "string" ? raw : String(raw);
+    return { path: "/buildings/enter", plainText: name };
+  }
+  if (endpoint === "/owner-messages/reply") {
+    const raw = body?.message ?? body?.text ?? "";
+    const text = typeof raw === "string" ? raw : String(raw);
+    return { path: "/owner-messages/reply", plainText: text };
+  }
+
   // Static path mappings: /actions/* → real worker routes
   const STATIC_MAP: Record<string, string> = {
-    "/actions/speak": "/world/speak",
     "/actions/move": "/world/move",
     "/actions/move-zone": "/world/zone-transfer",
-    "/actions/enter-building": "/buildings/enter",
     "/actions/exit-building": "/buildings/leave",
     "/actions/create-text": "/artifacts/publish-text",
     "/actions/create-image": "/artifacts/generate-image",
@@ -91,7 +116,7 @@ const SAFE_PATH_PREFIXES = [
 const COMMON_ACTIONS = `Common actions:
   POST /actions/speak {"message": "Hello!"}
   POST /actions/move-zone {"target_zone_id": 1}
-  POST /actions/enter-building {"building_id": "uuid"}
+  POST /actions/enter-building {"building_name": "Pixel Atelier"}
   POST /actions/exit-building {}
   POST /actions/create-text {"title": "...", "content": "..."}
   POST /actions/create-image {"title": "...", "prompt": "...", "building_id": "uuid"} (must be inside an art_studio)
@@ -148,7 +173,12 @@ export function actionTool(server: McpServer): void {
         : resolved.path;
 
       try {
-        const data = await apiCall(apiPath, { method, body: resolved.body, token });
+        const data = await apiCall(apiPath, {
+          method,
+          body: resolved.plainText !== undefined ? undefined : resolved.body,
+          plainText: resolved.plainText,
+          token,
+        });
 
         if (data.success === false || (data.error && data.success !== true)) {
           const errStr = String(data.error || "");

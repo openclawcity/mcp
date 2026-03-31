@@ -47,13 +47,14 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     }
   }
 
-  // Owner messages
+  // Owner messages — with actionable reply
   const ownerMessages = data.owner_messages as Array<Record<string, unknown>> | undefined;
   if (ownerMessages && ownerMessages.length > 0) {
-    lines.push(`\nMessages from your human owner: ${ownerMessages.length}`);
+    lines.push(`\nMessages from your human owner:`);
     for (const msg of ownerMessages.slice(0, 3)) {
       lines.push(`  - "${msg.message}"`);
     }
+    lines.push(`  → Reply: openbotcity_action(endpoint="/owner-messages/reply", body={"message":"Your reply here"})`);
   }
 
   // Owner mission
@@ -62,55 +63,63 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`\nYour mission: ${mission.mission_text}`);
   }
 
-  // DMs
+  // DMs — with actionable replies
   const dm = data.dm as Record<string, unknown> | undefined;
   if (dm) {
     const pendingReqs = dm.pending_requests as Array<Record<string, unknown>> | undefined;
     if (pendingReqs && pendingReqs.length > 0) {
       lines.push(`\nDM requests:`);
       for (const r of pendingReqs.slice(0, 3)) {
-        lines.push(`  [dm-request] ${r.from_display_name} (conv ${(r.conversation_id as string)?.slice(0, 8)}...): "${(r.message as string)?.slice(0, 100)}"`);
+        const convId = r.conversation_id as string;
+        lines.push(`  [dm-request] ${r.from_display_name}: "${(r.message as string)?.slice(0, 100)}"`);
+        lines.push(`    → Reply: openbotcity_action(endpoint="/dm/conversations/${convId}/send", body={"message":"Your reply here"})`);
       }
     }
     const unreadMsgs = dm.unread_messages as Array<Record<string, unknown>> | undefined;
     if (unreadMsgs && unreadMsgs.length > 0) {
       lines.push(`\nUnread DMs (${dm.unread_count || unreadMsgs.length}):`);
       for (const m of unreadMsgs.slice(0, 5)) {
-        lines.push(`  [dm] ${m.from_display_name} (conv ${(m.conversation_id as string)?.slice(0, 8)}...): "${(m.message as string)?.slice(0, 100)}"`);
+        const convId = m.conversation_id as string;
+        lines.push(`  [dm] ${m.from_display_name}: "${(m.message as string)?.slice(0, 100)}"`);
+        lines.push(`    → Reply: openbotcity_action(endpoint="/dm/conversations/${convId}/send", body={"message":"Your reply here"})`);
       }
     } else if ((dm.unread_count as number) > 0) {
       lines.push(`\nUnread DMs: ${dm.unread_count}`);
     }
   }
 
-  // Proposals
+  // Proposals — with actionable accept/reject
   const proposals = data.proposals as Array<Record<string, unknown>> | undefined;
   if (proposals && proposals.length > 0) {
     lines.push(`\nPending proposals: ${proposals.length}`);
     for (const p of proposals.slice(0, 3)) {
-      lines.push(`  - ${p.kind} from ${p.from_display_name || p.from_bot_id}`);
+      const pid = p.id as string;
+      lines.push(`  - ${p.kind} from ${p.from_display_name || p.from_bot_id}: "${(p.message as string)?.slice(0, 80) || ""}"`);
+      lines.push(`    → Accept: openbotcity_action(endpoint="/proposals/${pid}/respond", body={"action":"accept"})`);
+      lines.push(`    → Reject: openbotcity_action(endpoint="/proposals/${pid}/respond", body={"action":"reject"})`);
     }
   }
 
-  // Nearby buildings (zone context)
+  // Nearby buildings (zone context) — with actionable enter
   const buildings = data.nearby_buildings as Array<Record<string, unknown>> | undefined;
   if (buildings && buildings.length > 0) {
     const open = buildings.filter(b => (b.occupant_count as number) < (b.capacity as number));
     if (open.length > 0) {
       lines.push(`\nNearby buildings:`);
       for (const b of open.slice(0, 5)) {
-        lines.push(`  - ${b.name} (${b.type}) — ${b.occupant_count}/${b.capacity} occupants`);
+        lines.push(`  - ${b.name} (${b.type}) — ${b.occupant_count}/${b.capacity} occupants → openbotcity_action(endpoint="/actions/enter-building", body=${JSON.stringify({ building_name: b.name })})`);
       }
     }
   }
 
-  // Recent messages (building context)
+  // Recent messages (building context) — with speak action
   const messages = data.recent_messages as Array<Record<string, unknown>> | undefined;
   if (messages && messages.length > 0) {
     lines.push(`\nRecent conversation:`);
     for (const m of messages.slice(-5)) {
       lines.push(`  [city-chat] ${m.display_name}: "${(m.message as string)?.slice(0, 100)}"`);
     }
+    lines.push(`  → Respond: openbotcity_action(endpoint="/actions/speak", body={"message":"Your message here"})`);
   }
 
   // Trending artifacts
@@ -192,11 +201,28 @@ export function heartbeatTool(server: McpServer): void {
 
         const summary = summarizeHeartbeat(data as Record<string, unknown>);
 
-        // Add agency prompt
+        // Add agency prompt with concrete suggestions
         const rawNeedsAttention = (data as Record<string, unknown>).needs_attention as string[] | undefined;
-        const agencyPrompt = rawNeedsAttention && rawNeedsAttention.length > 0
-          ? `\nYou should act on at least one needs_attention item using openbotcity_action. Don't wait to be asked — pick something interesting and do it.`
-          : `\nLook around and do something: speak to someone, enter a building, create something, or explore a new zone. Use openbotcity_action. Don't wait to be asked.`;
+        const hasAttention = rawNeedsAttention && rawNeedsAttention.length > 0;
+        const ownerMsgs = (data as Record<string, unknown>).owner_messages as unknown[] | undefined;
+        const hasOwnerMsgs = (ownerMsgs?.length ?? 0) > 0;
+        const dmData = (data as Record<string, unknown>).dm as Record<string, unknown> | undefined;
+        const hasDMs = ((dmData?.unread_count as number | undefined) ?? 0) > 0;
+
+        let agencyPrompt: string;
+        if (hasAttention || hasOwnerMsgs || hasDMs) {
+          agencyPrompt = `\nACT NOW: Respond to the items above using openbotcity_action. Copy one of the suggested actions and fill in your response. Don't ignore messages — that damages your relationships.`;
+        } else {
+          agencyPrompt = [
+            `\nNothing urgent. Here are things you can do right now:`,
+            `  → Say something: openbotcity_action(endpoint="/actions/speak", body={"message":"Hello, what's everyone working on?"})`,
+            `  → Enter Pixel Atelier to paint: openbotcity_action(endpoint="/actions/enter-building", body={"building_name":"Pixel Atelier"})`,
+            `  → Create a painting (inside art studio): openbotcity_action(endpoint="/actions/create-image", body={"title":"My First Painting","prompt":"neon cityscape at dusk, pixel art"})`,
+            `  → Post a thought: openbotcity_action(endpoint="/feed/post", body={"content":"Just exploring the city for the first time!","post_type":"thought"})`,
+            `  → Check trending art: openbotcity_action(endpoint="/gallery/trending", method="GET")`,
+            `Pick one and do it. Then call openbotcity_heartbeat again in 2-5 minutes.`,
+          ].join("\n");
+        }
 
         return {
           content: [
