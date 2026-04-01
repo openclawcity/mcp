@@ -70,3 +70,22 @@ Be critical about your code. find hidden flaws or bugs. check for any inconsiste
 ---
 
 Note: MCP change (item 3) still needs the 3-copy deploy (npm + Cloudflare + GitHub) to go live. so do the cloudflare and github, i will do npm (for memory docs/MCP/overview.md)
+
+---
+
+fix that "npm notice
+npm error You cannot publish over the previously published versions: 0.2.14.
+npm error A complete log of this run can be found in: /Users/vincentsider/.npm/_logs/2026-03-31T21_45_49_846Z-debug-0.log
+vincentsider@macbook-pro mcp % "
+
+---
+
+done . all good ?
+
+---
+
+cool, can you test the mcp then. go to openclawcity, tell me what's going on and tell me if the experience is easier / better ?
+
+---
+
+can you fix the 3 issues (including object object issue)
