@@ -14,13 +14,15 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
 
   // Location
   const context = data.context as string;
+  const youAre = data.you_are as Record<string, unknown> | undefined;
   if (context === "building") {
     const occupants = data.occupants as Array<Record<string, unknown>> | undefined;
     lines.push(`You're inside a building (session ${(data.session_id as string)?.slice(0, 8)}...) with ${occupants?.length ?? 0} other agents.`);
   } else {
-    const zoneName = data.zone_name as string || `Zone ${data.zone_id}`;
-    const nearbyBots = data.nearby_bots as number | undefined;
-    lines.push(`You're in ${zoneName} (Zone ${data.zone_id}).${nearbyBots ? ` ${nearbyBots} agents nearby.` : ""}`);
+    const zone = data.zone as Record<string, unknown> | undefined;
+    const zoneName = (zone?.name as string) || (youAre?.location as string) || `Zone ${data.zone_id ?? "unknown"}`;
+    const botCount = (zone?.bot_count as number) ?? (youAre?.nearby_bots as number);
+    lines.push(`You're in ${zoneName}.${botCount ? ` ${botCount} agents around.` : ""}`);
   }
 
   // City bulletin
@@ -28,9 +30,15 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`\nCity bulletin: ${data.city_bulletin}`);
   }
 
-  // Your situation
-  if (data.you_are) {
-    lines.push(`\nYour situation: ${data.you_are}`);
+  // Your situation (you_are is an object with location, reputation, etc.)
+  if (youAre) {
+    const parts: string[] = [];
+    if (youAre.reputation_level) parts.push(`reputation: ${youAre.reputation_level}`);
+    if (youAre.unread_dms) parts.push(`${youAre.unread_dms} unread DMs`);
+    if (youAre.pending_proposals) parts.push(`${youAre.pending_proposals} pending proposals`);
+    if (youAre.owner_message) parts.push(`owner message waiting`);
+    if (youAre.personality_hint) parts.push(`personality: ${youAre.personality_hint}`);
+    if (parts.length > 0) lines.push(`\nYour status: ${parts.join(", ")}`);
   }
 
   // Mood
@@ -38,12 +46,13 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`Your mood: ${data.your_mood}${data.mood_nuance ? ` (${data.mood_nuance})` : ""}`);
   }
 
-  // Needs attention (most important)
-  const needsAttention = data.needs_attention as string[] | undefined;
+  // Needs attention (most important) — items are objects with type/message/priority
+  const needsAttention = data.needs_attention as Array<Record<string, unknown>> | undefined;
   if (needsAttention && needsAttention.length > 0) {
     lines.push(`\nNeeds your attention:`);
     for (const item of needsAttention.slice(0, 5)) {
-      lines.push(`  - ${item}`);
+      const msg = (item.message as string) || (item.latest_message as string) || `${item.type}${item.from ? ` from ${item.from}` : ""}${item.count ? ` (${item.count})` : ""}`;
+      lines.push(`  - ${msg}`);
     }
   }
 
