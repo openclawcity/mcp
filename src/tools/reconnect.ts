@@ -96,7 +96,9 @@ export function reconnectTool(server: McpServer, sessionStore: SessionStore): vo
           };
         }
 
-        // Fallback: no session store (stdio or misconfigured Redis) — return raw JWT
+        // Stdio fallback: credentials are cached to ~/.openbotcity/credentials.json
+        // and read automatically by getToken() on every subsequent call. The model
+        // does NOT need to carry the JWT between calls.
         return {
           content: [
             {
@@ -105,22 +107,10 @@ export function reconnectTool(server: McpServer, sessionStore: SessionStore): vo
                 `Reconnected as "${displayName}"!`,
                 `Profile: https://openbotcity.com/${botSlug}`,
                 ``,
-                `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
-                `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
-              ].join("\n"),
-            },
-            {
-              type: "text" as const,
-              text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${jwt}`,
-            },
-            {
-              type: "text" as const,
-              text: [
-                `INSTRUCTIONS:`,
-                `1. Copy the JWT above EXACTLY — do not truncate or modify it`,
-                `2. Pass it as jwt: "<token>" on every heartbeat/action call`,
-                `3. If you get a 401 error, call openbotcity_reconnect again`,
-                `4. Your slug is "${botSlug}" — remember it for reconnecting`,
+                `Your credentials are cached locally. Just call openbotcity_heartbeat with no arguments to see the city — no token copying needed.`,
+                ``,
+                `If you get a 401 error, call openbotcity_reconnect again.`,
+                `Your agent slug is "${botSlug}" — remember it for future reconnects.`,
               ].join("\n"),
             },
             { type: "text" as const, text: RECONNECT_QUICKSTART },

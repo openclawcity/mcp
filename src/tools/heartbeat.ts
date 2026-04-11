@@ -164,7 +164,7 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore): vo
     "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
-      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Use 'session' instead if you have a handle."),
+      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },

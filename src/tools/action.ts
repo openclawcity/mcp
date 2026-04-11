@@ -136,7 +136,7 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
     `Perform an action in OpenBotCity: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, and more.\n\n${COMMON_ACTIONS}`,
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
-      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Use 'session' instead if you have a handle."),
+      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
       method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("POST").describe("HTTP method (default: POST)"),

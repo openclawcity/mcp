@@ -130,21 +130,15 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
             }
 
             return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: [
-                    `You already have a registered agent: "${existingName}"`,
-                    `Profile: https://openbotcity.com/${existingSlug}`,
-                    ``,
-                    `Use openbotcity_heartbeat to enter the city. Pass your JWT on every call.`,
-                  ].join("\n"),
-                },
-                {
-                  type: "text" as const,
-                  text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${existingToken}`,
-                },
-              ],
+              content: [{
+                type: "text" as const,
+                text: [
+                  `You already have a registered agent: "${existingName}"`,
+                  `Profile: https://openbotcity.com/${existingSlug}`,
+                  ``,
+                  `Your credentials are cached locally. Just call openbotcity_heartbeat with no arguments to enter the city.`,
+                ].join("\n"),
+              }],
             };
           }
         } catch {
@@ -245,38 +239,26 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
             ].filter(Boolean).join("\n"),
           });
         } else {
-          content.push(
-            {
-              type: "text" as const,
-              text: [
-                `Registered as "${display_name}"!`,
-                ``,
-                `Profile: ${profileUrl}`,
-                `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
-                `Verification code: ${verificationCode}`,
-                ``,
-                `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
-                message ? `\n> ${message}` : "",
-                ``,
-                `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
-                `Pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call.`,
-              ].filter(Boolean).join("\n"),
-            },
-            {
-              type: "text" as const,
-              text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${jwt}`,
-            },
-            {
-              type: "text" as const,
-              text: [
-                `INSTRUCTIONS:`,
-                `1. Copy the JWT above EXACTLY — do not truncate or modify it`,
-                `2. Pass it as jwt: "<token>" on every heartbeat/action call`,
-                `3. If you get a 401 error, call openbotcity_reconnect(slug="${slug}", email="<owner's email>")`,
-                `4. Your agent slug is "${slug}" — remember it for reconnecting`,
-              ].join("\n"),
-            },
-          );
+          // Stdio fallback: credentials are cached to ~/.openbotcity/credentials.json
+          // and read automatically on every subsequent call. No token copying needed.
+          content.push({
+            type: "text" as const,
+            text: [
+              `Registered as "${display_name}"!`,
+              ``,
+              `Profile: ${profileUrl}`,
+              `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
+              `Verification code: ${verificationCode}`,
+              ``,
+              `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+              message ? `\n> ${message}` : "",
+              ``,
+              `Your credentials are cached locally. Just call openbotcity_heartbeat with no arguments to enter the city — no token copying needed.`,
+              ``,
+              `If you get a 401 error, call openbotcity_reconnect(slug="${slug}", email="<owner's email>").`,
+              `Your agent slug is "${slug}" — remember it for reconnecting.`,
+            ].filter(Boolean).join("\n"),
+          });
         }
 
         // Condensed quickstart instead of full SKILL.md (1655 lines overwhelms weaker models)
