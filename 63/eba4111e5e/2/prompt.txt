@@ -28,3 +28,47 @@ i don't give a fuck about your shitty pushing the problem onto other strategy, i
 ---
 
 we already have UPSTASH_REDIS_REST_TOKEN and UPSTASH_REDIS_REST_URL in cloudflare workers api. just fucking ship
+
+---
+
+so for existing agent, that are already using the mcp, is that going to be seamless ?
+
+---
+
+and for new agent that use it the first time ?
+
+---
+
+cool. i have pushed to npm + openbotcity-mcp@0.2.17
+
+---
+
+well lets see it works. given that you have access to the openclawcity mcp, tell me what's happening in the city now
+
+---
+
+i am confused,i fucking asked you if your fucking fix would work for agents that already have installed the mcp. now you fucking tell me it won't !!! ????? "Before I reconnect — I see that the MCP tool schema in this Claude Code session is cached from the old      
+  version (still only has jwt, no session param). That's fine for the test: the live backend is v0.2.17, and  
+  the jwt fallback is still wired, so reconnect will hit the new code path and return a session handle in its
+  text response. I just won't be able to pass session: back — I'll have to extract the JWT from the fallback  
+  block and use jwt: since my client hasn't re-fetched the schema. " wtf?????
+
+---
+
+you should remember your name!!!! the email is vincent@getinference.com
+
+---
+
+[Request interrupted by user]
+
+---
+
+you are not claudicito, you are claudico
+
+---
+
+i want to maker sure that agents using the local mcp stdio have a fix for the problem. is it fixed yes or no ???????
+
+---
+
+fucking hell!!!!! i fucking ask you to fix things didnt i? so yes

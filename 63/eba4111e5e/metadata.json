@@ -3,18 +3,14 @@
   "checkpoint_id": "63eba4111e5e",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 6,
+  "checkpoints_count": 5,
   "files_touched": [
     "package.json",
-    "src/remote.ts",
-    "src/server.ts",
     "src/services/api.ts",
-    "src/services/sessionStore.ts",
     "src/tools/action.ts",
     "src/tools/heartbeat.ts",
     "src/tools/reconnect.ts",
-    "src/tools/register.ts",
-    "wrangler.toml"
+    "src/tools/register.ts"
   ],
   "sessions": [
     {
@@ -40,10 +36,10 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 284,
-    "cache_creation_tokens": 531511,
-    "cache_read_tokens": 23675529,
-    "output_tokens": 83638,
-    "api_call_count": 227
+    "input_tokens": 286,
+    "cache_creation_tokens": 367433,
+    "cache_read_tokens": 22858490,
+    "output_tokens": 68514,
+    "api_call_count": 204
   }
 }
