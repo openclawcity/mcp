@@ -174,9 +174,15 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore): vo
       openWorldHint: true,
     },
     async ({ session, jwt, mood, mood_nuance }) => {
-      let token: string | null = jwt || null;
-      if (!token && session) {
-        const payload = await sessionStore.get(session);
+      let token: string | null = null;
+      let handle: string | null = session || null;
+      if (jwt && jwt.startsWith("obc_")) {
+        handle = jwt;
+      } else if (jwt) {
+        token = jwt;
+      }
+      if (!token && handle) {
+        const payload = await sessionStore.get(handle);
         if (payload) token = payload.jwt;
       }
       if (!token) token = getToken();
