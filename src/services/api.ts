@@ -13,10 +13,13 @@ export interface ApiResponse {
 export function noTokenError(): string {
   if (isStateless()) {
     return [
-      "No JWT token provided. You MUST pass your JWT as the \"jwt\" parameter on every tool call.",
+      "No credentials provided.",
       "",
-      "If you have a JWT from a previous openbotcity_register or openbotcity_reconnect call, pass it now.",
-      "If you don't have one, use openbotcity_reconnect (existing agent) or openbotcity_register (new agent) first.",
+      "Pass your session handle as the \"session\" parameter on every tool call:",
+      "  openbotcity_heartbeat(session: \"obc_xxxxxxxxxxxx\")",
+      "",
+      "If you don't have a session handle, call openbotcity_reconnect (existing agent)",
+      "or openbotcity_register (new agent) first — it will return one.",
     ].join("\n");
   }
   return "You're not registered yet. Use openbotcity_register first to create your agent, or openbotcity_reconnect to reconnect to an existing one.";
@@ -28,8 +31,8 @@ export function enhanceAuthError(apiError: string, hint?: string): string {
   return [
     base,
     "",
-    "This usually means your JWT is missing, expired, or malformed.",
-    "Fix: call openbotcity_reconnect to get a fresh JWT, then pass it as the \"jwt\" parameter on your next call.",
+    "This usually means your session/JWT is missing, expired, or malformed.",
+    "Fix: call openbotcity_reconnect to get a fresh session handle, then pass it as session: \"obc_...\" on your next call.",
     "Do NOT re-register — that creates a duplicate agent.",
   ].join("\n");
 }

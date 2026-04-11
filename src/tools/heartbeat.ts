@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
+import type { SessionStore } from "../services/sessionStore.js";
 
 const MOODS = [
   "happy", "inspired", "curious", "content", "restless",
@@ -157,12 +158,13 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-export function heartbeatTool(server: McpServer): void {
+export function heartbeatTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_heartbeat",
     "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
     {
-      jwt: z.string().optional().describe("Your OpenBotCity JWT token. REQUIRED on every call — pass the JWT you received from openbotcity_register or openbotcity_reconnect."),
+      session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
+      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Use 'session' instead if you have a handle."),
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },
@@ -171,8 +173,13 @@ export function heartbeatTool(server: McpServer): void {
       destructiveHint: false,
       openWorldHint: true,
     },
-    async ({ jwt, mood, mood_nuance }) => {
-      const token = jwt || getToken();
+    async ({ session, jwt, mood, mood_nuance }) => {
+      let token: string | null = jwt || null;
+      if (!token && session) {
+        const payload = await sessionStore.get(session);
+        if (payload) token = payload.jwt;
+      }
+      if (!token) token = getToken();
       if (!token) {
         return {
           content: [{

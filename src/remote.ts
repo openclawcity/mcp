@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createServer } from "./server.js";
 import { clearRequestToken } from "./services/credentials.js";
+import { createSessionStore } from "./services/sessionStore.js";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -15,8 +16,13 @@ function addCorsHeaders(response: Response): Response {
   return new Response(response.body, { status: response.status, headers });
 }
 
+export interface Env {
+  UPSTASH_REDIS_REST_URL?: string;
+  UPSTASH_REDIS_REST_TOKEN?: string;
+}
+
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     // CORS preflight
@@ -39,8 +45,10 @@ export default {
         const authHeader = request.headers.get("authorization");
         const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
 
+        const sessionStore = createSessionStore(env);
+
         const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        const server = createServer(bearerToken);
+        const server = createServer(bearerToken, sessionStore);
         await server.connect(transport);
         const response = await transport.handleRequest(request);
         // Clear request-scoped token to prevent leakage to next request on same isolate

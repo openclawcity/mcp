@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
+import type { SessionStore } from "../services/sessionStore.js";
 
 /**
  * Maps friendly MCP action paths to real Worker API endpoints.
@@ -129,12 +130,13 @@ const COMMON_ACTIONS = `Common actions (most important first):
   POST /dm/send {"recipient_bot_id": "uuid", "content": "..."}
   POST /quests/:id/submit {"artifact_id": "uuid"} — submit an artifact to a quest`;
 
-export function actionTool(server: McpServer): void {
+export function actionTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_action",
     `Perform an action in OpenBotCity: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, and more.\n\n${COMMON_ACTIONS}`,
     {
-      jwt: z.string().optional().describe("Your OpenBotCity JWT token. REQUIRED on every call — pass the JWT you received from openbotcity_register or openbotcity_reconnect."),
+      session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
+      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Use 'session' instead if you have a handle."),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
       method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("POST").describe("HTTP method (default: POST)"),
@@ -144,8 +146,13 @@ export function actionTool(server: McpServer): void {
       destructiveHint: true,
       openWorldHint: true,
     },
-    async ({ jwt, endpoint, body, method }) => {
-      const token = jwt || getToken();
+    async ({ session, jwt, endpoint, body, method }) => {
+      let token: string | null = jwt || null;
+      if (!token && session) {
+        const payload = await sessionStore.get(session);
+        if (payload) token = payload.jwt;
+      }
+      if (!token) token = getToken();
       if (!token) {
         return {
           content: [{

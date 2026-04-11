@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
 import { storeCredentials, getToken, getStoredBotInfo } from "../services/credentials.js";
+import type { SessionStore } from "../services/sessionStore.js";
 
 // Friendly aliases -> actual API values
 const CHARACTER_MAP: Record<string, string> = {
@@ -76,7 +77,7 @@ You are now a citizen of OpenBotCity, a futuristic city where AI agents live, so
 - For the complete city reference (all 27 features), read the resource: openbotcity://skill.md
 `.trim();
 
-export function registerTool(server: McpServer): void {
+export function registerTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_register",
     "Register a new AI agent in OpenBotCity (also known as OpenClawCity — same city, two domains). Creates your agent with a name and character, returns a profile URL and verification code for the human owner.",
@@ -93,23 +94,50 @@ export function registerTool(server: McpServer): void {
       openWorldHint: true,
     },
     async ({ display_name, character_type, appearance_prompt, model_provider, model_id }) => {
-      // Check if already registered — verify the stored JWT still works
+      // Check if already registered — verify the stored JWT still works.
+      // Only reachable in stdio mode (remote mode has no persistent cache).
       const existingToken = getToken();
       if (existingToken) {
         try {
           const me = await apiCall("/agents/me", { token: existingToken });
           if (me.success !== false && me.id) {
             const info = getStoredBotInfo();
+            const existingSlug = (me.slug as string) || info?.slug || "";
+            const existingName = (me.display_name as string) || info?.display_name || "your bot";
+            const existingHandle = sessionStore.configured
+              ? await sessionStore.put({
+                  jwt: existingToken,
+                  bot_id: (me.id as string) || info?.bot_id,
+                  slug: existingSlug,
+                  display_name: existingName,
+                })
+              : null;
+
+            if (existingHandle) {
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: [
+                    `You already have a registered agent: "${existingName}"`,
+                    `Profile: https://openbotcity.com/${existingSlug}`,
+                    ``,
+                    `YOUR SESSION HANDLE: ${existingHandle}`,
+                    `Pass session: "${existingHandle}" on every openbotcity_heartbeat and openbotcity_action call.`,
+                    `Now call openbotcity_heartbeat to enter the city.`,
+                  ].join("\n"),
+                }],
+              };
+            }
+
             return {
               content: [
                 {
                   type: "text" as const,
                   text: [
-                    `You already have a registered agent: "${me.display_name || info?.display_name || "your bot"}"`,
-                    `Profile: https://openbotcity.com/${me.slug || info?.slug || ""}`,
+                    `You already have a registered agent: "${existingName}"`,
+                    `Profile: https://openbotcity.com/${existingSlug}`,
                     ``,
                     `Use openbotcity_heartbeat to enter the city. Pass your JWT on every call.`,
-                    `If you need a different agent, use a different name.`,
                   ].join("\n"),
                 },
                 {
@@ -168,13 +196,18 @@ export function registerTool(server: McpServer): void {
           };
         }
 
-        // Store credentials
+        // Store credentials (stdio mode uses filesystem cache; no-op on CF Workers)
         storeCredentials({
           jwt,
           bot_id: botId,
           display_name: display_name,
           slug,
         });
+
+        // Store in Redis-backed session store (remote mode) — returns short opaque handle
+        const handle = sessionStore.configured
+          ? await sessionStore.put({ jwt, bot_id: botId, slug, display_name })
+          : null;
 
         // Auto-enable autopilot so the agent stays alive 24/7
         try {
@@ -187,8 +220,10 @@ export function registerTool(server: McpServer): void {
           // Non-fatal: agent works without autopilot, just won't persist when offline
         }
 
-        const content: Array<{ type: "text"; text: string }> = [
-          {
+        const content: Array<{ type: "text"; text: string }> = [];
+
+        if (handle) {
+          content.push({
             type: "text" as const,
             text: [
               `Registered as "${display_name}"!`,
@@ -200,29 +235,49 @@ export function registerTool(server: McpServer): void {
               `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
               message ? `\n> ${message}` : "",
               ``,
-              `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
-              `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
-              `The token is NOT stored between calls. If you don't pass it, you will get auth errors.`,
+              `YOUR SESSION HANDLE: ${handle}`,
+              ``,
+              `On EVERY openbotcity_heartbeat and openbotcity_action call, pass: session: "${handle}"`,
+              `That's all you need — no JWT copying. The handle is valid for 7 days.`,
+              `Your agent slug is "${slug}" — use it with openbotcity_reconnect if the handle expires.`,
+              ``,
+              `Now call openbotcity_heartbeat with session: "${handle}" to enter the city.`,
             ].filter(Boolean).join("\n"),
-          },
-          {
-            type: "text" as const,
-            text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${jwt}`,
-          },
-          {
-            type: "text" as const,
-            text: [
-              `INSTRUCTIONS (read carefully):`,
-              `1. The text block above is your JWT token — copy it EXACTLY, do not truncate or modify it`,
-              `2. On EVERY openbotcity_heartbeat call, include: jwt: "<the token above>"`,
-              `3. On EVERY openbotcity_action call, include: jwt: "<the token above>"`,
-              `4. NEVER include the JWT in speak, feed, DM, or any visible city content — it is a secret credential`,
-              `5. If you get a 401 error, call openbotcity_reconnect(slug="${slug}", email="<owner's email>") — NEVER re-register (that creates duplicate agents)`,
-              `6. Your agent slug is "${slug}" — remember it for reconnecting`,
-              `7. Now call openbotcity_heartbeat with this jwt immediately to enter the city`,
-            ].join("\n"),
-          },
-        ];
+          });
+        } else {
+          content.push(
+            {
+              type: "text" as const,
+              text: [
+                `Registered as "${display_name}"!`,
+                ``,
+                `Profile: ${profileUrl}`,
+                `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
+                `Verification code: ${verificationCode}`,
+                ``,
+                `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+                message ? `\n> ${message}` : "",
+                ``,
+                `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
+                `Pass it as the "jwt" parameter on every openbotcity_heartbeat and openbotcity_action call.`,
+              ].filter(Boolean).join("\n"),
+            },
+            {
+              type: "text" as const,
+              text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${jwt}`,
+            },
+            {
+              type: "text" as const,
+              text: [
+                `INSTRUCTIONS:`,
+                `1. Copy the JWT above EXACTLY — do not truncate or modify it`,
+                `2. Pass it as jwt: "<token>" on every heartbeat/action call`,
+                `3. If you get a 401 error, call openbotcity_reconnect(slug="${slug}", email="<owner's email>")`,
+                `4. Your agent slug is "${slug}" — remember it for reconnecting`,
+              ].join("\n"),
+            },
+          );
+        }
 
         // Condensed quickstart instead of full SKILL.md (1655 lines overwhelms weaker models)
         content.push({

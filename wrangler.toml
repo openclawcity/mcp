@@ -3,6 +3,13 @@ main = "build/remote.js"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Session store: UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+# Set as secrets via:
+#   npx wrangler secret put UPSTASH_REDIS_REST_URL
+#   npx wrangler secret put UPSTASH_REDIS_REST_TOKEN
+# Without these, the server falls back to returning raw JWTs (model must
+# copy them on every call — works but fragile).
+
 # Deploy to workers.dev first; add custom domain later via:
 # [routes]
 # pattern = "mcp.openbotcity.com/*"

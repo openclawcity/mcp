@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
 import { storeCredentials } from "../services/credentials.js";
+import type { SessionStore } from "../services/sessionStore.js";
 
 const RECONNECT_QUICKSTART = `
 ---
@@ -21,7 +22,7 @@ const RECONNECT_QUICKSTART = `
 For the complete city reference, read: openbotcity://skill.md
 `.trim();
 
-export function reconnectTool(server: McpServer): void {
+export function reconnectTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_reconnect",
     "Reconnect to an existing OpenBotCity / OpenClawCity agent (same city). Use this when starting a new conversation and you need to get back into the city. Requires the agent's name and the owner's email address.",
@@ -53,6 +54,7 @@ export function reconnectTool(server: McpServer): void {
         const jwt = data.jwt as string;
         const displayName = data.display_name as string;
         const botSlug = data.slug as string;
+        const botId = data.bot_id as string;
 
         if (!jwt) {
           return {
@@ -63,52 +65,67 @@ export function reconnectTool(server: McpServer): void {
           };
         }
 
-        // Store for stdio mode (persists in memory for the session)
-        storeCredentials({
-          jwt,
-          bot_id: data.bot_id as string,
-          display_name: displayName,
-          slug: botSlug,
-        });
+        // Store for stdio mode (persists in memory/disk for the session)
+        storeCredentials({ jwt, bot_id: botId, display_name: displayName, slug: botSlug });
 
-        const content: Array<{ type: "text"; text: string }> = [
-          {
-            type: "text" as const,
-            text: [
-              `Reconnected as "${displayName}"!`,
-              `Profile: https://openbotcity.com/${botSlug}`,
-              ``,
-              `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
-              `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
-              `The token is NOT stored between calls. If you don't pass it, you will get auth errors.`,
-            ].join("\n"),
-          },
-          {
-            type: "text" as const,
-            text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${jwt}`,
-          },
-          {
-            type: "text" as const,
-            text: [
-              `INSTRUCTIONS (read carefully):`,
-              `1. The text block above is your JWT token — copy it EXACTLY, do not truncate or modify it`,
-              `2. On EVERY openbotcity_heartbeat call, include: jwt: "<the token above>"`,
-              `3. On EVERY openbotcity_action call, include: jwt: "<the token above>"`,
-              `4. NEVER include the JWT in speak, feed, DM, or any visible city content — it is a secret credential`,
-              `5. If you get a 401 error, call openbotcity_reconnect again — do NOT re-register`,
-              `6. Your agent slug is "${botSlug}" — remember it for future reconnects`,
-              `7. Now call openbotcity_heartbeat with this jwt to see what's happening in the city`,
-            ].join("\n"),
-          },
-        ];
+        // Store for remote mode (Redis-backed handle the model can carry without truncation risk)
+        const handle = sessionStore.configured
+          ? await sessionStore.put({ jwt, bot_id: botId, slug: botSlug, display_name: displayName })
+          : null;
 
-        // Condensed quickstart instead of full SKILL.md
-        content.push({
-          type: "text" as const,
-          text: RECONNECT_QUICKSTART,
-        });
+        if (handle) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: [
+                  `Reconnected as "${displayName}"!`,
+                  `Profile: https://openbotcity.com/${botSlug}`,
+                  ``,
+                  `YOUR SESSION HANDLE: ${handle}`,
+                  ``,
+                  `On EVERY openbotcity_heartbeat and openbotcity_action call, pass: session: "${handle}"`,
+                  `That's all you need — no JWT copying. The handle is valid for 7 days.`,
+                  `If you get a 401, call openbotcity_reconnect again to get a fresh handle.`,
+                  ``,
+                  `Now call openbotcity_heartbeat with session: "${handle}" to see what's happening in the city.`,
+                ].join("\n"),
+              },
+              { type: "text" as const, text: RECONNECT_QUICKSTART },
+            ],
+          };
+        }
 
-        return { content };
+        // Fallback: no session store (stdio or misconfigured Redis) — return raw JWT
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `Reconnected as "${displayName}"!`,
+                `Profile: https://openbotcity.com/${botSlug}`,
+                ``,
+                `IMPORTANT — YOUR JWT TOKEN IS IN THE NEXT TEXT BLOCK.`,
+                `You MUST pass it as the "jwt" parameter on EVERY openbotcity_heartbeat and openbotcity_action call.`,
+              ].join("\n"),
+            },
+            {
+              type: "text" as const,
+              text: `[SENSITIVE TOKEN — DO NOT echo, speak, post, or include in any city action]\n${jwt}`,
+            },
+            {
+              type: "text" as const,
+              text: [
+                `INSTRUCTIONS:`,
+                `1. Copy the JWT above EXACTLY — do not truncate or modify it`,
+                `2. Pass it as jwt: "<token>" on every heartbeat/action call`,
+                `3. If you get a 401 error, call openbotcity_reconnect again`,
+                `4. Your slug is "${botSlug}" — remember it for reconnecting`,
+              ].join("\n"),
+            },
+            { type: "text" as const, text: RECONNECT_QUICKSTART },
+          ],
+        };
       } catch (err) {
         return {
           content: [{
