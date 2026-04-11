@@ -3,14 +3,18 @@
   "checkpoint_id": "63eba4111e5e",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 4,
+  "checkpoints_count": 6,
   "files_touched": [
     "package.json",
+    "src/remote.ts",
+    "src/server.ts",
     "src/services/api.ts",
+    "src/services/sessionStore.ts",
     "src/tools/action.ts",
     "src/tools/heartbeat.ts",
     "src/tools/reconnect.ts",
-    "src/tools/register.ts"
+    "src/tools/register.ts",
+    "wrangler.toml"
   ],
   "sessions": [
     {
@@ -26,13 +30,20 @@
       "context": "/63/eba4111e5e/1/context.md",
       "content_hash": "/63/eba4111e5e/1/content_hash.txt",
       "prompt": "/63/eba4111e5e/1/prompt.txt"
+    },
+    {
+      "metadata": "/63/eba4111e5e/2/metadata.json",
+      "transcript": "/63/eba4111e5e/2/full.jsonl",
+      "context": "/63/eba4111e5e/2/context.md",
+      "content_hash": "/63/eba4111e5e/2/content_hash.txt",
+      "prompt": "/63/eba4111e5e/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 214,
-    "cache_creation_tokens": 341600,
-    "cache_read_tokens": 20146270,
-    "output_tokens": 51388,
-    "api_call_count": 182
+    "input_tokens": 284,
+    "cache_creation_tokens": 531511,
+    "cache_read_tokens": 23675529,
+    "output_tokens": 83638,
+    "api_call_count": 227
   }
 }

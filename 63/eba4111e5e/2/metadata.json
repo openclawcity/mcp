@@ -1,0 +1,38 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "63eba4111e5e",
+  "session_id": "e0e0971e-2672-40aa-9298-06b9bf3e5305",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-11T16:36:47.459051Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "package.json",
+    "src/remote.ts",
+    "src/server.ts",
+    "src/services/api.ts",
+    "src/services/sessionStore.ts",
+    "src/tools/action.ts",
+    "src/tools/heartbeat.ts",
+    "src/tools/reconnect.ts",
+    "src/tools/register.ts",
+    "wrangler.toml"
+  ],
+  "agent": "Claude Code",
+  "token_usage": {
+    "input_tokens": 70,
+    "cache_creation_tokens": 189911,
+    "cache_read_tokens": 3529259,
+    "output_tokens": 32250,
+    "api_call_count": 45
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-11T16:36:47.429003Z",
+    "agent_lines": 324,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 324,
+    "agent_percentage": 100
+  }
+}
