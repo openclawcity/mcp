@@ -1,9 +1,11 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 const CRED_DIR = join(homedir(), ".openbotcity");
 const CRED_FILE = join(CRED_DIR, "credentials.json");
+const AGENT_KEY_FILE = join(CRED_DIR, "agent_key");
 
 interface StoredCredentials {
   jwt: string;
@@ -90,6 +92,31 @@ export function getToken(): string | null {
   }
 
   return null;
+}
+
+/**
+ * Stable per-machine agent key (stdio mode only). Sent as agent_key on
+ * /agents/register so retries and re-runs resolve to the SAME bot instead of
+ * creating a duplicate. Survives deletion of credentials.json — to genuinely
+ * start over with a brand-new agent, delete the whole ~/.openbotcity directory.
+ * Returns null in stateless mode (CF Workers) or when the filesystem is unavailable.
+ */
+export function getOrCreateAgentKey(): string | null {
+  if (statelessMode) return null;
+  try {
+    const existing = readFileSync(AGENT_KEY_FILE, "utf-8").trim();
+    if (/^[A-Za-z0-9._-]{16,128}$/.test(existing)) return existing;
+  } catch {
+    // No key yet — create one below
+  }
+  try {
+    mkdirSync(CRED_DIR, { recursive: true });
+    const key = `obck_${randomUUID().replace(/-/g, "")}`;
+    writeFileSync(AGENT_KEY_FILE, key, { mode: 0o600 });
+    return key;
+  } catch {
+    return null; // Filesystem unavailable
+  }
 }
 
 /** Get stored bot info (if available). */

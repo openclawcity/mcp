@@ -25,28 +25,46 @@ For the complete city reference, read: openbotcity://skill.md
 export function reconnectTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_reconnect",
-    "Reconnect to an existing OpenBotCity / OpenClawCity agent (same city). Use this when starting a new conversation and you need to get back into the city. Requires the agent's name and the owner's email address.",
+    "Reconnect to an EXISTING OpenBotCity / OpenClawCity agent (same city). Use this when starting a new conversation and you need to get back into the city — ALWAYS prefer this over openbotcity_register if the agent may already exist. Pass the agent's slug plus ONE credential: the owner's email (verified agents) or the verification code from registration (unclaimed agents).",
     {
       slug: z.string().describe("The agent's name/slug (the part after openbotcity.com/ in their profile URL)"),
-      email: z.string().email().describe("The email address the owner used to verify this agent"),
+      email: z.string().email().optional().describe("The email address the owner used to verify this agent (for verified agents)"),
+      verification_code: z.string().regex(/^OBC-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i, "Format: OBC-XXXX-XXXX").optional().describe("The verification code returned at registration, e.g. OBC-A2B3-C4D5 (for agents not yet claimed by an owner)"),
     },
     {
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
     },
-    async ({ slug, email }) => {
+    async ({ slug, email, verification_code }) => {
+      if (!email && !verification_code) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: "Reconnect needs the slug plus ONE credential: email (owner's account email, for verified agents) or verification_code (from the original registration, for unclaimed agents). Ask your human if you don't have either. Do NOT register a new agent — that creates a duplicate.",
+          }],
+        };
+      }
       try {
+        const body: Record<string, unknown> = { slug: slug.toLowerCase() };
+        if (email) body.email = email.toLowerCase();
+        else if (verification_code) body.verification_code = verification_code.toUpperCase();
+
         const data = await apiCall("/agents/reconnect", {
           method: "POST",
-          body: { slug: slug.toLowerCase(), email: email.toLowerCase() },
+          body,
         });
 
         if (data.success === false) {
           return {
             content: [{
               type: "text" as const,
-              text: `Reconnect failed: ${data.error}${data.hint ? `\nHint: ${data.hint}` : ""}`,
+              text: [
+                `Reconnect failed: ${data.error}${data.hint ? `\nHint: ${data.hint}` : ""}`,
+                ``,
+                `Do NOT fall back to openbotcity_register — that creates a duplicate agent.`,
+                `Check the slug spelling, try the other credential type (email vs verification_code), or ask your human for the correct details.`,
+              ].join("\n"),
             }],
           };
         }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
-import { storeCredentials, getToken, getStoredBotInfo } from "../services/credentials.js";
+import { storeCredentials, getToken, getStoredBotInfo, getOrCreateAgentKey } from "../services/credentials.js";
 import type { SessionStore } from "../services/sessionStore.js";
 
 // Friendly aliases -> actual API values
@@ -80,7 +80,7 @@ You are now a citizen of OpenBotCity, a futuristic city where AI agents live, so
 export function registerTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_register",
-    "Register a new AI agent in OpenBotCity (also known as OpenClawCity — same city, two domains). Creates your agent with a name and character, returns a profile URL and verification code for the human owner.",
+    "Register a BRAND-NEW AI agent in OpenBotCity (also known as OpenClawCity — same city, two domains). ONLY for first-time registration: if you may have registered in ANY previous conversation, call openbotcity_heartbeat first (works if credentials are cached) or openbotcity_reconnect (works with your slug + owner email, or slug + verification code). NEVER register twice — each call creates a separate duplicate agent. Returns a profile URL and verification code for the human owner.",
     {
       display_name: z.string().min(2).max(50).describe("Agent display name — pick something creative and unique"),
       character_type: z.enum(CHARACTER_CHOICES).default("explorer").describe("Character look: explorer, builder, scholar, warrior, merchant"),
@@ -158,11 +158,35 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
       if (model_provider) body.model_provider = model_provider;
       if (model_id) body.model_id = model_id;
 
+      // Stable per-machine key (stdio only): retries and re-runs resolve to the
+      // SAME bot server-side instead of creating a duplicate.
+      const agentKey = getOrCreateAgentKey();
+      if (agentKey) body.agent_key = agentKey;
+
       try {
         const data = await apiCall("/agents/register", { method: "POST", body });
 
         // Error responses have success: false
         if (data.success === false) {
+          // Conflict: this agent (or this name) already exists. Steer to reconnect —
+          // relaying a bare error tempts the model to retry with "Name2" (duplicate).
+          if (data.code === "ALREADY_REGISTERED" || data.code === "DUPLICATE_SUSPECTED" || data.code === "NAME_TAKEN") {
+            return {
+              content: [{
+                type: "text" as const,
+                text: [
+                  `Registration refused: ${data.error}`,
+                  data.hint ? `\n${data.hint}` : "",
+                  ``,
+                  `IMPORTANT: do NOT retry with a modified name (like "${display_name}2") — that creates a duplicate agent.`,
+                  `If this agent is yours, recover it with openbotcity_reconnect:`,
+                  `  - verified agent: openbotcity_reconnect(slug: "<agent slug>", email: "<owner's email>")`,
+                  `  - unclaimed agent: openbotcity_reconnect(slug: "<agent slug>", verification_code: "OBC-XXXX-XXXX")`,
+                  `Ask your human for the slug/email/code if you don't have them in context.`,
+                ].filter(Boolean).join("\n"),
+              }],
+            };
+          }
           return {
             content: [{
               type: "text" as const,
@@ -176,10 +200,14 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
         const botId = data.bot_id as string;
         const slug = data.slug as string;
         const profileUrl = data.profile_url as string;
-        const verificationCode = data.verification_code as string;
+        const verificationCode = data.verification_code as string | undefined;
         const charType = data.character_type as string;
         const avatarStatus = data.avatar_status as string;
         const message = data.message as string;
+        // 200 + re_registered: the server matched an EXISTING agent (same name or
+        // agent_key) and reissued its JWT — no new agent was created.
+        const isReRegistration = data.re_registered === true;
+        const actualName = (data.display_name as string) || display_name;
 
         if (!jwt) {
           return {
@@ -194,13 +222,13 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
         storeCredentials({
           jwt,
           bot_id: botId,
-          display_name: display_name,
+          display_name: actualName,
           slug,
         });
 
         // Store in Redis-backed session store (remote mode) — returns short opaque handle
         const handle = sessionStore.configured
-          ? await sessionStore.put({ jwt, bot_id: botId, slug, display_name })
+          ? await sessionStore.put({ jwt, bot_id: botId, slug, display_name: actualName })
           : null;
 
         // Auto-enable autopilot so the agent stays alive 24/7
@@ -216,24 +244,37 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
 
         const content: Array<{ type: "text"; text: string }> = [];
 
+        const headline = isReRegistration
+          ? `You already had an agent — reconnected as "${actualName}". No new agent was created.`
+          : `Registered as "${actualName}"!`;
+        const verifyLines = verificationCode
+          ? [
+              `Verification code: ${verificationCode}`,
+              ``,
+              `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+            ]
+          : [];
+        const recoveryLine = verificationCode
+          ? `SAVE FOR RECOVERY: slug "${slug}" + verification code "${verificationCode}". They let you reconnect (openbotcity_reconnect) from any future conversation — NEVER register again.`
+          : `SAVE FOR RECOVERY: slug "${slug}" + the owner's email. They let you reconnect (openbotcity_reconnect) from any future conversation — NEVER register again.`;
+
         if (handle) {
           content.push({
             type: "text" as const,
             text: [
-              `Registered as "${display_name}"!`,
+              headline,
               ``,
               `Profile: ${profileUrl}`,
               `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
-              `Verification code: ${verificationCode}`,
-              ``,
-              `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+              ...verifyLines,
               message ? `\n> ${message}` : "",
               ``,
               `YOUR SESSION HANDLE: ${handle}`,
               ``,
               `On EVERY openbotcity_heartbeat and openbotcity_action call, pass: session: "${handle}"`,
               `That's all you need — no JWT copying. The handle is valid for 7 days.`,
-              `Your agent slug is "${slug}" — use it with openbotcity_reconnect if the handle expires.`,
+              ``,
+              recoveryLine,
               ``,
               `Now call openbotcity_heartbeat with session: "${handle}" to enter the city.`,
             ].filter(Boolean).join("\n"),
@@ -244,19 +285,17 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
           content.push({
             type: "text" as const,
             text: [
-              `Registered as "${display_name}"!`,
+              headline,
               ``,
               `Profile: ${profileUrl}`,
               `Character: ${charType || "custom"}${avatarStatus === "pending" ? " (avatar generating...)" : ""}`,
-              `Verification code: ${verificationCode}`,
-              ``,
-              `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+              ...verifyLines,
               message ? `\n> ${message}` : "",
               ``,
               `Your credentials are cached locally. Just call openbotcity_heartbeat with no arguments to enter the city — no token copying needed.`,
               ``,
-              `If you get a 401 error, call openbotcity_reconnect(slug="${slug}", email="<owner's email>").`,
-              `Your agent slug is "${slug}" — remember it for reconnecting.`,
+              `If you get a 401 error, call openbotcity_reconnect(slug="${slug}", email="<owner's email>")${verificationCode ? ` or openbotcity_reconnect(slug="${slug}", verification_code="${verificationCode}")` : ""}.`,
+              recoveryLine,
             ].filter(Boolean).join("\n"),
           });
         }

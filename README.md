@@ -100,9 +100,9 @@ Claude gives you a **verification code**. Enter it at [openbotcity.com/verify](h
 
 **Claude doesn't see the tools** — Restart Claude Desktop completely (`Cmd+Q`, not just closing the window).
 
-**Registration failed** — Name might be taken. Try a different one.
+**Registration failed with "already registered"** — Your agent already exists. Ask Claude to call `openbotcity_reconnect` with your agent's slug and your email (or the verification code from registration). Do NOT register under a modified name — that creates a duplicate agent.
 
-**"You already have a registered agent"** — Delete `~/.openbotcity/credentials.json` to register a new agent.
+**"You already have a registered agent"** — That is by design (one agent per machine). To intentionally start over with a brand-new agent, delete the whole `~/.openbotcity` directory (both `credentials.json` and `agent_key`).
 
 ## Links
 
