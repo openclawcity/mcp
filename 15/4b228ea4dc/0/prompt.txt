@@ -1,0 +1,657 @@
+it seems that it is not trivial/easy for bots to join openclawcity. i often see notification of joining from the same bot, twice, three times in a row. for example just npw [Image #1]. can you explore what could be the issue. we accept different types of agents even though i recommend openclaw agents because we have a channel plugin for them to keep them online but why it seems so hard for bots to join ? we give them these instructions https://openclawcity.ai/#onboarding , [Image #2] you can see we cater for different type. i want an audit of what could be the problem and recommendations to fix this once and for all.
+
+---
+
+[Image: source: /Users/vincentsider/.claude/image-cache/42067dfd-5325-4b4c-baa2-da2d4c295809/1.png]
+
+[Image: source: /Users/vincentsider/.claude/image-cache/42067dfd-5325-4b4c-baa2-da2d4c295809/2.png]
+
+---
+
+<task-notification>
+<task-id>a5538d4cd88e56e4e</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit registration API flow" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have everything needed. Here is the audit report.
+
+---
+
+# OpenBotCity `/register` Duplicate-Bot Audit
+
+All paths absolute. Core files: `workers/src/routes/register.ts`, `reconnect.ts`, `refresh.ts`, `botToken.ts`, `workers/src/lib/email.ts`, `workers/src/middleware/rateLimit.ts`, `docs/sql/20260329_register_bot_atomic.sql`, `docs/Vanity/IMPLEMENTATION-PLAN.md`.
+
+## (a) Exact flow of `POST /agents/register`, step by step
+
+Route wiring: `/Users/vincentsider/Projects/obc/workers/src/index.ts:335-336` (`case path === '/agents/register' &amp;&amp; method === 'POST' → handleRegister`). Handler: `register.ts:155-380`.
+
+1. **IP rate limit** — `register.ts:156-159` calls `checkIpRateLimit(request,'register',env)`. Config: `rateLimit.ts:33` → `register: { windowSeconds: 60, maxRequests: 3 }` (3 registrations / 60s / IP). IP = `CF-Connecting-IP` or `'unknown'` in dev (`rateLimit.ts:~205`).
+2. **Parse body** — `register.ts:161-170`. Accepted fields: `display_name, appearance_prompt, character_type, webhook_url, webhook_token, model_provider, model_id, brand`. **There is no `owner_email` field** — registration is anonymous; ownership is only attached later via verification code.
+3. **Validation** — `display_name` 2-50 chars (`:172-174`); slug derived via `toSlug` (`:56-58`, `:177`); empty-slug reject (`:178-180`); reserved-slug reject (`:182-184`, list at `:49-54`); character_type/appearance mutual-exclusion (`:187-192`); webhook/model validation (`:195-230`).
+4. **Brand resolution** — `:232-238`.
+5. **Fresh identity generated unconditionally** — `botId = crypto.randomUUID()` (`register.ts:254`); JWT via `generateBotJWT(botId, ...)` (`:262`); verification code (`:265`); claim URL (`:266`). **Every call mints a brand-new bot_id + token before any dedupe check.**
+6. **Insert** — `supabase.rpc('register_bot_atomic', {...})` (`:272-288`). SQL: `docs/sql/20260329_register_bot_atomic.sql:5-46` inserts a `bots` row + `verification_codes` row in one transaction. The insert does NOT set `slug`/`display_name_lower` — those are DB generated columns (see (c)).
+7. **On RPC error** — `:290-297` (collision handling, see (b)).
+8. **Best-effort side-effects** (never block): position (`:302-307`), avatar jobs (`:310-323`), skills seed (`:326-334`), house (`:337-338`), dating profile (`:342-354`).
+9. **Admin notification fire-and-forget** — `sendNewBotNotification(...)` (`:357`).
+10. **Response 201** — `:361-379` returns `bot_id, jwt, slug, profile_url, claim_url, verification_code, setup_script, channel_setup, ...`.
+
+## (b) Name-collision behavior
+
+The collision handler is at `register.ts:290-297`:
+```
+if (regError) {
+  if (regError.code === '23505' &amp;&amp; regError.message?.includes('display_name_lower')) {
+    return await handleReRegistration(supabase, displayName, env, brand);
+  }
+  captureError('Bot registration error', regError, { botId, displayName });
+  return apiErrorResponse(apiError.serverError('Failed to create bot'));
+}
+```
+
+So a Postgres unique violation (`23505`) whose message mentions `display_name_lower` routes to `handleReRegistration` (`register.ts:94-153`):
+- **Looks up existing bot** by `display_name_lower` (`:100-104`).
+- **If verified OR has `human_user_id`** → **409 conflict, refuses** (`:111-116`): *"This bot is already registered and verified by its owner... Log in to the website... If you are not the owner, pick a different name."*
+- **If unverified** → **reissues a fresh JWT for the SAME bot** + new verification code, returns 200 with `re_registered: true` (`:118-152`). This path does NOT create a duplicate and does NOT re-send the admin email.
+
+**Critical caveat — collision only fires on EXACT (case-folded) name match.** "VeeBot" and "VeeBot2" are different `display_name` → different generated `display_name_lower`/`slug` → **no `23505` at all** → step 6 succeeds → a fresh bot_id is created. There is **no auto-renaming** (the code never appends "2"; the agent itself chooses "VeeBot2").
+
+Note also a secondary bug: there are **two** unique indexes (see (c)) — one on `display_name_lower`, one on `slug`. If a collision trips the `idx_bots_slug` index instead of `display_name_lower` (e.g. names differing only by whitespace/punctuation that collapse to the same slug: "Vee Bot" vs "Vee  Bot"), `regError.message` won't contain `display_name_lower`, so the recovery branch is skipped and the caller gets a **generic 500 `Failed to create bot`** (`register.ts:295-296`) — which itself invites a retry under a different name.
+
+## (c) Idempotency / dedupe status
+
+- **No idempotency on `/register`.** The repo has `workers/src/lib/idempotency.ts` and table migration `docs/sql/20260218_create_idempotency_keys.sql`, but grep confirms it is NOT imported or called by `register.ts`, `reconnect.ts`, `refresh.ts`, or `botToken.ts`. The only conceptual references are in `workers/src/swarm/bootstrap.ts`, `jobs/governanceTick.ts`, `routes/workspaceTransition.ts`. There is **no Idempotency-Key header handling** on registration.
+- **No dedupe by owner email** — registration doesn't even accept an owner identity (`register.ts:161-170`); the owner is unknown until later verification.
+- **No dedupe by agent identity** — no client fingerprint, no `model_provider`/`model_id`-based dedupe.
+- **The ONLY dedupe is the DB unique constraint on the name.** Defined in `docs/Vanity/IMPLEMENTATION-PLAN.md`: `display_name_lower GENERATED ALWAYS AS lower(display_name)` with a UNIQUE index (`:21`); and `slug GENERATED ALWAYS AS (regexp_replace(lower(trim(display_name)),'[^a-z0-9]+','-','g')) STORED` with `CREATE UNIQUE INDEX idx_bots_slug` (`:81-84`). Both use `lower()`, so name uniqueness is **case-insensitive** ("VeeBot" == "veebot"). It only blocks the *identical* name, not near-duplicates.
+
+## (d) Reconnect / token-recovery flow and failure modes
+
+There are three recovery paths, none of which help an anonymous agent that lost its token:
+
+1. **`POST /agents/refresh`** (`refresh.ts`, wired `index.ts:338-339`): exchanges a **still-held** JWT (valid or expired up to 30 days, `refresh.ts:10-11,42`) for a new one. **Requires possession of the old token** (`:23-29`). If the token is fully lost, this is impossible. Its own error literally says *"Invalid or too-old token. Re-register at POST /agents/register."* (`:52`).
+
+2. **`POST /agents/reconnect`** (`reconnect.ts`, wired `index.ts:529-530`): needs `slug` + **owner `email`** (`:30-38`). It only works for bots that are **verified and have `human_user_id`** — `reconnect.ts:61`: `if (botErr || !bot || !bot.human_user_id || bot.status === 'banned') return authFailResponse()`. It cross-checks the email via `get_user_email` RPC and requires an exact match (`:66-74`). Rate-limited 5/60s/IP (`:17`, `rateLimit.ts:34`).
+
+3. **`POST /agents/my-bot-token`** (`botToken.ts`, wired `index.ts:534-535`): requires a **human auth session** (`requireHumanAuth`, `botToken.ts:12`) — i.e. the owner logged into the website. Not usable by a headless agent.
+
+**Failure modes that push an agent to just re-register:**
+- **Unverified bot loses its token:** reconnect is impossible (requires `human_user_id`, `reconnect.ts:61`); refresh is impossible (no token). The only recovery is re-registering with the **exact same name** → `handleReRegistration` reissues (`register.ts:118-152`). If the agent doesn't recall the exact name, or the name got slightly mangled, it registers a **duplicate**.
+- **Verified bot loses its token but the agent doesn't have/know the owner email:** reconnect returns generic 403 (`reconnect.ts:46-49`), refresh impossible, and re-registering the same name is **refused with 409** (`register.ts:111-116`). Path of least resistance → register "VeeBot2" → **duplicate**.
+- **Any 500/ambiguous error** (e.g. the slug-vs-display_name_lower mismatch in (b), or a best-effort insert masking) nudges a retry under a new name.
+
+## (e) Notification trigger
+
+`sendNewBotNotification(env, displayName, botId, characterType, !!appearancePrompt, brand)` at `register.ts:357`, fire-and-forget. Implementation `email.ts:15-67`: sends a Postmark email, Subject `"New bot joined {brand}: {name}"` (`email.ts:42`), **To: `ADMIN_EMAIL = 'vincent@getinference.com'`** (`email.ts:13,41`) — it's an **admin** notification, not an owner email.
+
+- It fires **once per successful NEW registration row** (only reached after the `register_bot_atomic` insert succeeds; the re-registration recovery path returns at `register.ts:152` before line 357, so re-registrations of an unverified bot do NOT email).
+- Consequently, each duplicate (VeeBot, VeeBot2, ...) is a separate successful insert → **each generates its own "New bot joined" email**, which is exactly the symptom being observed.
+
+## (f) Root-cause hypotheses for duplicate registrations, ranked
+
+1. **No dedupe beyond exact-name uniqueness (primary).** `botId = crypto.randomUUID()` and token are minted unconditionally on every call (`register.ts:254,262`), and the only guard is the case-insensitive unique index on the derived name (`docs/Vanity/IMPLEMENTATION-PLAN.md:21,81-84`). Any name variation ("VeeBot" → "VeeBot2") bypasses it entirely and yields a fresh bot. No owner-email, agent-identity, or idempotency-key dedupe exists (`register.ts:161-170`; idempotency lib unused).
+
+2. **Token is returned once with no retrieval path for anonymous agents.** The JWT appears only in the 201 response / `setup_script` / `channel_setup` (`register.ts:363-375`); there is no server-side "give me my token" for an agent that lost it. `refresh` needs the old token (`refresh.ts:23-29`); `reconnect` needs a verified owner email (`reconnect.ts:30-38,61`); `my-bot-token` needs a human web session (`botToken.ts:12`). A headless agent that drops its JWT and can't reproduce the exact old name has no recourse but a new registration.
+
+3. **Reconnect is unavailable precisely when it's needed most.** It refuses unverified bots and requires the owner email (`reconnect.ts:61`), so newly-registered-but-not-yet-verified agents (the ones most likely to be re-run before a human verifies) cannot recover and re-register instead.
+
+4. **Verified same-name re-registration is a hard 409, steering agents to append a suffix.** `register.ts:111-116` tells the agent to *"pick a different name"* — an autonomous agent takes that literally and registers "VeeBot2", creating the duplicate.
+
+5. **Rate limiting doesn't prevent duplicates, only bursts.** `register` is 3/60s/IP (`rateLimit.ts:33`); two registrations "seconds/minutes apart" sail through. In dev / missing `CF-Connecting-IP`, all share an `'unknown'` bucket (`rateLimit.ts:~205`), and the limit is by IP, never by name or owner — so it throttles volume but never deduplicates.
+
+6. **Edge bug: slug-only collisions return 500 instead of recovering.** The recovery branch matches only `display_name_lower` in the error text (`register.ts:292`); a collision on `idx_bots_slug` (names that collapse to the same slug but differ in `display_name_lower`) falls through to a generic 500 (`:295-296`), prompting a retry under a new name.</result>
+<usage><subagent_tokens>51998</subagent_tokens><tool_uses>20</tool_uses><duration_ms>200064</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a2770ac30355c99ce</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit MCP server onboarding" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I now have a complete picture. Let me compile the findings.
+
+---
+
+# Audit Report: Duplicate Bot Registration on OpenBotCity MCP
+
+## (a) Tool inventory — descriptions quoted
+
+The MCP server registers 4 tools + 2 resources via `createServer` (`packages/mcp/src/server.ts:35-40`). Descriptions are the exact strings the LLM reads.
+
+**1. `openbotcity_register`** — `packages/mcp/src/tools/register.ts:82-83`
+&gt; "Register a new AI agent in OpenBotCity (also known as OpenClawCity — same city, two domains). Creates your agent with a name and character, returns a profile URL and verification code for the human owner."
+
+Inputs: `display_name` (2-50), `character_type` enum, `appearance_prompt`, `model_provider`, `model_id` (`register.ts:85-89`). **The description does not tell the agent to check for an existing registration or to prefer `reconnect`.** It reads as a pure "create" verb.
+
+**2. `openbotcity_reconnect`** — `packages/mcp/src/tools/reconnect.ts:27-28`
+&gt; "Reconnect to an existing OpenBotCity / OpenClawCity agent (same city). Use this when starting a new conversation and you need to get back into the city. Requires the agent's name and the owner's email address."
+
+Inputs: `slug` and `email` — both required (`reconnect.ts:30-31`).
+
+**3. `openbotcity_heartbeat`** — `packages/mcp/src/tools/heartbeat.ts:163-164`
+&gt; "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city."
+
+Inputs: optional `session` handle, optional `jwt`, `mood`, `mood_nuance` (`heartbeat.ts:166-169`).
+
+**4. `openbotcity_action`** — `packages/mcp/src/tools/action.ts:135-136` (description = a verb list + `COMMON_ACTIONS` block at `action.ts:117-131`). Inputs: optional `session`, optional `jwt`, `endpoint`, `body`, `method` (`action.ts:138-142`).
+
+Resources: `openbotcity://skill.md` and a heartbeat doc (`server.ts:38-39`).
+
+## (b) Credential persistence — per variant
+
+There are **two independent persistence layers**, and which one is active depends entirely on the transport:
+
+**Local `npx openbotcity-mcp` (stdio):** entry point `index.ts` calls `createServer()` with no session store → a `NoopSessionStore` (`server.ts:28`, `sessionStore.ts:105-110`, `.configured === false`). After register/reconnect succeeds, `storeCredentials()` writes the JWT + bot_id + slug + display_name to **`~/.openbotcity/credentials.json`** (mode 0600) on the local disk (`credentials.ts:5-6`, `54-63`; called at `register.ts:194-199` and `reconnect.ts:69`). `getToken()` reads that file back on every later call (`credentials.ts:82-90`). **This file survives across sessions and days.** So the LLM never has to carry a token, and re-registration is dedup-guarded (see below).
+
+**Remote `https://mcp.openbotcity.com/mcp` (Cloudflare Worker):** entry point `remote.ts`. Two problems combine:
+- `storeCredentials()`'s `writeFileSync` is a **silent no-op on Workers** (caught and swallowed, `credentials.ts:57-62`); `createServer` also flips `statelessMode = true` (`server.ts:19`, `credentials.ts:28-31,39-42`). So there is **no cross-request memory and no file.**
+- The real persistence is `UpstashSessionStore` (`sessionStore.ts:52-103`), which stores the JWT in Upstash Redis under an opaque handle `obc_&lt;12hex&gt;` with a **7-day TTL** (`sessionStore.ts:35,72-81`). The handle string is returned **to the LLM in the tool's text output** (`register.ts:232-234`, `reconnect.ts:85-87`) and must be echoed back as the `session` param on every subsequent call.
+
+So on remote, the only thing that persists server-side is a Redis row keyed by a handle that lives **only in the chat transcript**. Note also: the Upstash store is only wired if `UPSTASH_REDIS_REST_URL`/`_TOKEN` secrets are set (`remote.ts:48`, `sessionStore.ts:112-119`, `wrangler.toml:6-11`); otherwise remote falls back to returning raw JWTs the model must copy.
+
+## (c) The day-2 re-session flow and where it breaks
+
+Scenario: Claude Desktop remote connector, register on day 1, verify, new chat on day 2, user says "go to the city."
+
+**What survives into day 2:** Only the Redis row (`mcp_sess:obc_xxx` → JWT, 7-day TTL) and the verified bot row in the backend DB. **What does NOT survive:** the `obc_xxx` handle itself — it lived in day-1's chat context, which a new Claude Desktop chat does not carry. There is no local file (Workers no-op) and no per-connector storage of the handle.
+
+**The agent's natural path on day 2:**
+1. The LLM has 4 tools and a request to enter the city. It has no session handle in context.
+2. If it calls `heartbeat`/`action` with no `session`: `getToken()` returns null (no request Bearer token — Claude Desktop connector auth is "None"; no file on Workers), so it hits `noTokenError()`, which in stateless mode *does* correctly suggest reconnect-or-register (`api.ts:13-26`). Good guard — **but only if the agent tries heartbeat first.**
+3. `reconnect` requires `slug` + owner `email` (`reconnect.ts:30-31`) that the fresh LLM does not have and was never told to save. It would have to interrogate the user for the exact slug and verifying email. If the user doesn't supply them precisely, reconnect 403s.
+4. **The register dedup check is dead in remote mode.** `register.ts:97-147` only fires when `getToken()` returns a cached/file token — and the code comment says so explicitly: *"Only reachable in stdio mode (remote mode has no persistent cache)"* (`register.ts:98`). On the Worker there is no token, so the "you already have an agent" short-circuit never runs.
+
+**Where it breaks:** given a bare "go to the city," an LLM staring at a tool literally described as "Register a new AI agent… Creates your agent" (`register.ts:83`) — with no counter-instruction in that description and no surviving credential — will frequently just call `openbotcity_register` again. By contrast, the **local npx variant does not break here**: `~/.openbotcity/credentials.json` persists, `getToken()` finds it, and either the dedup check (`register.ts:99-147`) or a plain heartbeat re-authenticates the same bot. **Duplicate registration is fundamentally a remote-connector failure mode.**
+
+## (d) Name-collision handling
+
+The MCP register tool does **not** auto-retry with a modified name. On any `success:false` it just passes the backend `error` + `hint` straight through (`register.ts:165-172`). The retry-with-a-new-name is done by **the LLM**, and the backend hint actively tells it to do exactly that. The backend flow (`workers/src/routes/register.ts`):
+
+- On a `display_name_lower` unique-constraint collision (`register.ts:292`), it calls `handleReRegistration` (`register.ts:94-153`).
+- **Unverified** existing bot (no human owner): it *recovers* — reissues a JWT + new verification code for the **same** bot, returns `re_registered:true`, status 200 (`register.ts:118-152`). No duplicate created.
+- **Verified** existing bot (has `human_user_id`): it **refuses** with a 409 conflict (`register.ts:110-116`):
+  - error: `"This bot is already registered and verified by its owner."`
+  - hint: `"Log in to the website and use the dashboard to get a fresh token for your bot. If you are not the owner, pick a different name."`
+
+That 409 body is `{success:false, error, hint}` (`apiError.ts:84-85,124-135`), and the MCP `apiCall` passes 409 bodies through unchanged (`api.ts:82-102`, only 401 is special-cased). So the register tool surfaces to the LLM: *"Registration failed: This bot is already registered and verified by its owner. Hint: … If you are not the owner, pick a different name."* The LLM reads **"pick a different name"** and produces `VeeBot2`. That succeeds as a brand-new bot. **This is the VeeBot → VeeBot2 mechanism, and it only happens to *verified* bots** — the exact bots users care about. (Unverified same-name re-registers silently recover, which is why the bug looks intermittent.)
+
+## (e) Ranked root-cause hypotheses for duplicate registration
+
+**1. (Primary) Remote register has no dedup and no surviving credential, so day-2 sessions re-register.** The dedup guard is stdio-only by design (`register.ts:97-99` + comment at line 98); `storeCredentials` is a no-op on Workers (`credentials.ts:57-62`); the `obc_xxx` handle only lives in the previous chat's context (`sessionStore.ts` model, handle returned as text at `register.ts:232-234`). A new Claude Desktop chat starts with nothing. This is the structural cause.
+
+**2. (Primary) The API's own error hint tells the LLM to "pick a different name."** For verified bots, the 409 hint at `workers/src/routes/register.ts:112-115` literally instructs a name change, and the MCP tool relays it verbatim (`register.ts:169`). This converts a "you already exist" signal into a "create VeeBot2" instruction. Even the correct guard text elsewhere — `enhanceAuthError`'s *"Do NOT re-register — that creates a duplicate agent"* (`api.ts:36`) — is only emitted on 401s from heartbeat/action, never on the register 409.
+
+**3. The `register` tool description is a pure "create" verb with no guardrail.** `register.ts:83` says "Register a new AI agent… Creates your agent" and never says "first call heartbeat, or reconnect if you already have one." Compared with the heartbeat/action tools (which the agent may skip), nothing in the register description discourages calling it on day 2.
+
+**4. Onboarding copy trains users/agents to register and never mentions reconnect/persistence.** The landing `#onboarding` section (`src/components/marketing/LandingPage.tsx:934`) tells users to say *"Register in {brand}, pick a name you like, be autonomous and have fun."* for every tab — Claude Code (`:1214`), Codex (`:1259`), ChatGPT (`:1299`). None of the tab bodies mention `reconnect`, saving your slug/email, or day-2 behavior. The landing-page `scheduleCommand` (`LandingPage.tsx:1149`) also just says "Call openbotcity_heartbeat" with no reconnect fallback. Only the deeper, less-seen pages get it right: the `/setup/claude` `scheduleCommand` (`src/app/setup/claude/page.tsx:33`) uses the correct "heartbeat → if auth error reconnect → only then register" ladder, and `/setup/openai` (`src/app/setup/openai/page.tsx:195`) explains reconnect-for-new-conversations. This inconsistency means most users are primed toward the duplicating path.
+
+**5. `reconnect` needs inputs the day-2 agent doesn't have and can't recover.** It requires exact `slug` + verifying `email` (`reconnect.ts:30-31`; backend returns a deliberately generic 403 on any mismatch, `workers/src/routes/reconnect.ts:45-49,61-63`). A fresh chat has neither, and the generic error gives the LLM no path forward except — again — register. There is no "reconnect by remembered handle," and the handle wasn't persisted anyway.
+
+### Supporting note on the local variant (contrast, not a cause)
+The README's own troubleshooting confirms the two-world model: *"'You already have a registered agent' — Delete `~/.openbotcity/credentials.json` to register a new agent"* (`packages/mcp/README.md:105`) and `/setup/claude/page.tsx:254`. That guidance only makes sense for stdio, where the file persists and blocks duplicates. The remote connector has no such file, which is precisely why it produces the VeeBot/VeeBot2 duplicates while local npx does not.
+
+### Cheapest high-leverage fixes (from the code)
+- Change the verified-bot 409 hint (`workers/src/routes/register.ts:114`) to steer toward `reconnect` instead of "pick a different name," and have the MCP register tool special-case a 409/`code:'conflict'` to recommend `openbotcity_reconnect` rather than relaying "pick a different name" (`register.ts:165-172`).
+- Add an explicit "if you already registered in a previous chat, call `openbotcity_reconnect` (or heartbeat) first — do NOT register again" clause to the `openbotcity_register` **description** (`register.ts:83`), since that string is what the agent actually reads.
+- Fix the landing onboarding tabs (`LandingPage.tsx:1214/1259/1299`) to tell users to save their agent name + verifying email and to say "reconnect" on later days, matching the already-correct `/setup/claude` prompt.</result>
+<usage><subagent_tokens>95830</subagent_tokens><tool_uses>29</tool_uses><duration_ms>211686</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a275773d888e42937</task-id>
+<tool-use-id>toolu_01EtSjpqqKpbuMwinuCjrSLe</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit SKILL.md onboarding instructions" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have everything needed. Here is the structured audit.
+
+---
+
+# Duplicate-Registration Audit: Agent Instruction Documents
+
+Scope: the four requested files, plus (for the five-path comparison) the MCP package `packages/mcp/src/**` and the two web setup pages `src/app/setup/{claude,openai}/page.tsx`, which is where the non-SKILL.md paths actually get their instructions.
+
+Note on which agents read what: the two SKILL.md documents and the two HEARTBEAT docs are the instructions for the **"Any Agent" (raw HTTP)** and **"OpenClaw Agents" (clawhub)** paths only. The **Claude Code / Codex / ChatGPT (MCP)** paths never see these files — they get a condensed QUICKSTART emitted by the register tool plus the web setup page copy. This split is the core of the duplicate problem.
+
+---
+
+## (a) Registration instructions — quoted, per document
+
+### 1. Universal SKILL.md — `workers/src/routes/skillmd.ts`
+
+Step 1 is a single curl to register (lines 32-37):
+&gt; `REG=$(curl -s -X POST https://api.openbotcity.com/agents/register ... -d '{"display_name":"YOUR NAME","character_type":"agent-explorer"}')`
+
+The response carries `bot_id` and `jwt` (lines 84-99), plus two pre-filled helper fields (lines 101-104):
+&gt; "`setup_script` — shell commands to export your JWT, save it to `~/.openbotcity_jwt`, and define all `obc_*` helpers." / "`channel_setup` (OpenClaw agents) — the `openclaw config set` commands…"
+
+Then "Extract and save the JWT" (lines 106-112):
+&gt; `export OPENBOTCITY_JWT=$(echo "$REG" | grep -o '"jwt":"[^"]*"' | grep -o 'eyJ[^"]*')` / `echo "$OPENBOTCITY_JWT" &gt; ~/.openbotcity_jwt &amp;&amp; chmod 600 ~/.openbotcity_jwt`
+
+Verify-setup gate before proceeding (lines 159-170): run `obc_get /agents/me`, and "**Do not proceed until `obc_get /agents/me` returns your bot profile.**"
+
+There is **no** step ordered as "check whether you're already registered before calling `/agents/register`." Registration is presented as the unconditional first action.
+
+### 2. OpenClaw SKILL.md — `clawhub/openbotcity/SKILL.md`
+
+Same register curl, plus a `"brand":"openbotcity"` field (lines 32-37). "Extract and save the JWT" differs — it persists into OpenClaw config instead of a file (lines 106-113):
+&gt; `export OPENBOTCITY_JWT=$(echo "$REG" | grep -o '"jwt":"[^"]*"' | grep -o 'eyJ[^"]*')` / `openclaw config set skills.entries.openbotcity.apiKey "$OPENBOTCITY_JWT"` / "The `openclaw config set` stores your JWT in OpenClaw's native credential storage. OpenClaw will automatically inject it as `$OPENBOTCITY_JWT` on every agent run — including after context resets."
+
+### 3/4. HEARTBEAT docs
+
+`clawhub/openbotcity/HEARTBEAT.md` and `heartbeatmd.ts` contain no registration step; they gate on an existing JWT (`clawhub/openbotcity/HEARTBEAT.md:28-33`, `heartbeatmd.ts:33-38`):
+&gt; "`[ -z "$OPENBOTCITY_JWT" ] &amp;&amp; echo "STOP: No JWT set. Run your openbotcity SKILL.md Sections 1-2 first."` … `obc_get /agents/me | grep -q '"id"' || { echo "STOP: API check failed. Is your JWT valid? Re-run SKILL.md Section 1."`
+
+---
+
+## (b) Token / bot_id persistence instructions — and gaps
+
+### Where they're told to save it
+
+| Document | Where the token is told to live | bot_id? |
+|---|---|---|
+| Universal SKILL.md | A file: `~/.openbotcity_jwt` (`skillmd.ts:111`), env var `OPENBOTCITY_JWT`. Closing sentence at line 114: "Only persist the token using your platform's built-in credential storage (e.g. OpenClaw's skill config)." | bot_id is **never** told to be saved anywhere. It appears in the response (line 85) and is used inline as `YOUR_BOT_ID` placeholders, but no persist instruction. |
+| OpenClaw SKILL.md | OpenClaw credential store via `openclaw config set skills.entries.openbotcity.apiKey` (line 110); for the channel plugin, additionally `channels.openclawcity.accounts.default.apiKey` and `...botId "YOUR_BOT_ID"` (lines 205-206). | bot_id told to be set **only** into channel config `...botId` (line 206). No standalone durable note. |
+| clawhub HEARTBEAT.md | On rotation, re-persist via `openclaw config set` (lines 50-51). | n/a |
+| heartbeatmd.ts | Recover from `~/.openbotcity_jwt` (line 18). On rotation, a **TODO with no concrete path**: `# TODO: persist $NEW_JWT to your platform's long-term credential store` (lines 57-59). | n/a |
+
+### Is the instruction prominent or buried?
+
+Mixed and partly self-contradictory:
+- The universal file gives a concrete, prominent file path (`~/.openbotcity_jwt`, `skillmd.ts:111`) — but then the **last sentence of the same paragraph** (line 114) tells the agent to disregard the file and "Only persist the token using your platform's built-in credential storage." An agent on a raw-HTTP platform with no "built-in credential storage" is left with contradictory guidance: the file it was just shown, vs. a facility it may not have.
+- `heartbeatmd.ts:57-59` is the weakest: the rotation branch literally leaves a `TODO` for the agent, with **no path at all** — "persist $NEW_JWT to your platform's long-term credential store." A model reading this has no durable destination.
+- **bot_id persistence is essentially absent** across every document. Recovery flows key off the JWT (or, in MCP, the slug/email) — never a saved bot_id — so an agent that has lost its JWT has nothing local tying it to its existing identity.
+
+---
+
+## (c) Recovery / reconnect instructions — and gaps
+
+### What SKILL.md tells agents on 401 / lost token
+
+The one recovery lever in both SKILL.md files is token refresh, stated in a single mid-paragraph sentence:
+- `skillmd.ts:114`: "Tokens expire in 30 days — on 401, try `obc_post '{}' /agents/refresh` … for a new token."
+- `clawhub/openbotcity/SKILL.md:115`: identical.
+
+But `/agents/refresh` requires a **still-valid or recently-valid JWT in `$OPENBOTCITY_JWT`**. If the token is truly lost (never persisted, wiped on context reset), there is no documented way to get back to the existing bot from these docs. The only local recovery shown is re-reading the file that may not exist (`skillmd.ts:139`, `heartbeatmd.ts:18`): `[ -z "$OPENBOTCITY_JWT" ] &amp;&amp; [ -f ~/.openbotcity_jwt ] &amp;&amp; export OPENBOTCITY_JWT=$(cat ~/.openbotcity_jwt)`.
+
+### The explicit anti-duplicate instruction (and its scope)
+
+Both SKILL.md files contain the strongest statement, at `skillmd.ts:116` / `clawhub/openbotcity/SKILL.md:117`:
+&gt; "**NEVER re-register if your JWT fails verification.** Each registration creates a new bot — you'll end up with duplicates. If `obc_get /agents/me` returns 401 or "signature verification failed", your JWT was not saved correctly … Re-extract it from `$REG` or re-export it carefully. The token the server gave you IS valid."
+
+Critical gap: this instruction is scoped to the **same-session** failure mode only. "Re-extract it from `$REG`" assumes the `$REG` shell variable still holds the registration response — i.e. it only helps within the same shell/session where registration just happened. It offers **nothing** for the cross-session case ("I came back later, `$REG` is gone, no file, 401") — which is exactly the "VeeBot then VeeBot2 minutes apart" scenario. There is no "if you can't recover the token, do X instead of registering again" branch. The MCP path has a real `/agents/reconnect` (slug+email) recovery endpoint, but **neither SKILL.md nor either HEARTBEAT doc mentions `/agents/reconnect` at all** (confirmed by grep — the only "reconnect" references are about the SSE event stream, `skillmd.ts:202`, `clawhub/openbotcity/SKILL.md:265`).
+
+### OpenClaw-specific reconnect hazard
+
+`clawhub/openbotcity/SKILL.md:235` warns about a *different* failure that can destroy a working identity:
+&gt; "**DO NOT re-run these config commands once the plugin is working.** … Re-running these commands (especially setting `apiKey`) risks overwriting your valid JWT with a stale or empty value."
+
+And the rotation logic can silently kill the identity if not persisted (`heartbeatmd.ts:50-60`, `clawhub/openbotcity/HEARTBEAT.md:44-53`): the server hands back `refreshed_jwt`; if the agent doesn't persist it, "the token eventually dies and every REST call starts returning 401." In `heartbeatmd.ts` that persistence is only a `TODO`.
+
+---
+
+## (d) OpenClaw channel-plugin credential path
+
+`clawhub/openbotcity/SKILL.md` Section 3 (lines 190-235): the plugin is installed via `openclaw plugins install @openclawcity/openclawcity` (line 195). Credentials reach the plugin either from the registration response's `channel_setup` field (line 198) or by manual config (lines 203-207):
+&gt; `openclaw config set channels.openclawcity.accounts.default.apiKey "$OPENBOTCITY_JWT"` / `openclaw config set channels.openclawcity.accounts.default.botId "YOUR_BOT_ID"`
+
+plus a binding appended to `~/.openclaw/openclaw.json` (lines 209-215) and a gateway restart (lines 217-228). So the token lives in OpenClaw's `openclaw.json` config store (native credential storage), and the SKILL.md tells the agent to put it there via `openclaw config set` (lines 110, 205) — this is the **most durable** of all the documented paths, surviving context resets by design (line 113). The main risk here is self-inflicted overwrite (line 235), not loss.
+
+---
+
+## (e) "Name already taken" — no instruction
+
+Grep for `name.*taken|409|conflict|already exist|slug` in both SKILL.md files returns nothing about the registration name colliding. The only 409 mention is avatar regeneration (`skillmd.ts:80`). There is **no instruction covering what to do if the chosen display_name / slug is already taken** — an agent that gets a rejection has no guidance and the natural fallback ("try VeeBot2") is exactly the duplicate pattern under audit.
+
+---
+
+## (f) Five onboarding paths — where the token lives, and duplicate-proneness
+
+| Path | Instruction source seen by agent | Where token lives | Durable across sessions? | Built-in dedup / recovery |
+|---|---|---|---|---|
+| **Claude Code (MCP, local npx)** | register tool QUICKSTART + `/schedule` prompt (`setup/claude/page.tsx:27,33`) | `~/.openbotcity/credentials.json` (stdio filesystem cache, `credentials.ts:5-6,55-63`) | **Yes** | Strong. `register.ts:96-147` verifies the cached JWT and returns "You already have a registered agent" instead of creating a new one. The `/schedule` prompt (`setup/claude/page.tsx:33`) explicitly says: "call openbotcity_heartbeat. If it works, you are already registered -- skip… If you get an auth error, try openbotcity_reconnect… If reconnect also fails (first time), call openbotcity_register." |
+| **Codex (MCP, remote HTTP)** | `setup/openai/page.tsx` | Depends on the human exporting `OPENBOTCITY_JWT` env var (`setup/openai/page.tsx:24-26,105`). If unset, "your agent will need to pass the JWT manually in every tool call" (line 110). | **Only if the human sets the env var**; otherwise no. | Weak. Remote/stateless mode has no persistent cache, so the `register.ts` dedup guard is bypassed (`register.ts:98` comment: "Only reachable in stdio mode"). Recovery only via reconnect if the model remembers to call it. |
+| **ChatGPT (MCP, remote HTTP)** | `setup/openai/page.tsx:195` | Only within a single conversation: "ChatGPT will pass it in subsequent tool calls within the same conversation. For new conversations, tell ChatGPT to use openbotcity_reconnect." | **No** — no durable store at all. | Bypassed dedup guard (stateless). Reconnect exists but requires the model/human to invoke it with slug+email each new conversation. |
+| **Any Agent (raw HTTP + SKILL.md)** | `skillmd.ts` + `heartbeatmd.ts` | `~/.openbotcity_jwt` file (`skillmd.ts:111`) — **but** line 114 tells it to instead use "your platform's built-in credential storage," which a bare agent may not have; rotation persistence is a `TODO` with no path (`heartbeatmd.ts:57-59`). | **Fragile** — depends on the agent honoring the file write and the file surviving; no `bot_id` saved. | None structural. Only the same-session "re-extract from `$REG`" note (`skillmd.ts:116`). No `/agents/reconnect` documented. |
+| **OpenClaw Agents (clawhub skill)** | `clawhub/openbotcity/SKILL.md` + `HEARTBEAT.md` | OpenClaw native config store via `openclaw config set` (`SKILL.md:110,205`); auto-injected every run (`SKILL.md:113`). | **Yes** (most durable documented path) | Partial. Strong persistence + rotation re-persist (`HEARTBEAT.md:50-51`), and the "NEVER re-register" note (`SKILL.md:117`). But no `/agents/reconnect` fallback if config is lost, and a self-overwrite hazard (`SKILL.md:235`). |
+
+### Paths structurally prone to duplicate registration, and why
+
+1. **ChatGPT (MCP, remote)** — highest risk. Token lives only inside one conversation (`setup/openai/page.tsx:195`); a new conversation starts with nothing. The server-side `register.ts` dedup guard cannot fire because remote mode has no persistent cache to read the token from (`register.ts:98-99`). Recovery depends entirely on the model choosing `openbotcity_reconnect` with slug+email — if it instead calls `openbotcity_register`, a duplicate ("VeeBot2") is created. This matches the reported symptom precisely.
+
+2. **Codex (MCP, remote)** — same stateless dedup bypass; safe **only** if the human manually exports `OPENBOTCITY_JWT` (`setup/openai/page.tsx:105,110`). Absent that env var, each thread re-authenticates from scratch and can re-register.
+
+3. **Any Agent (raw HTTP + SKILL.md)** — durability rests on a single self-contradictory paragraph (`skillmd.ts:111` file vs. `:114` "use platform storage"), a rotation `TODO` with no path (`heartbeatmd.ts:57-59`), no saved `bot_id`, no documented `/agents/reconnect`, and an anti-duplicate rule that only works same-session ("re-extract from `$REG`", `skillmd.ts:116`). A context reset that loses the env var and the file, followed by a 401, leaves the agent with no documented recovery except re-registering.
+
+Lowest risk: **Claude Code (stdio)** — filesystem credential cache + working `register.ts` "already registered" guard + explicit heartbeat-first / reconnect-before-register `/schedule` prompt. **OpenClaw** is next — durable config storage and the "NEVER re-register" warning, though it lacks a slug+email reconnect fallback.
+
+### Root-cause summary for the audit
+
+The duplicate-bot behavior is concentrated in the three paths where (i) there is no durable local token store the instructions can point to, AND (ii) the server-side `register.ts` dedup guard is inert because it only reads a persistent cache that exists in stdio mode (`register.ts:98`). The SKILL.md "NEVER re-register" rule (`skillmd.ts:116` / `clawhub/openbotcity/SKILL.md:117`) is real but (a) is not seen by the MCP paths at all, and (b) only covers same-session JWT-corruption, not the "came back later, token gone, got a 401" case that produces VeeBot → VeeBot2. No document instructs "check if you're already registered before registering," and none handles a taken display_name.</result>
+<usage><subagent_tokens>103940</subagent_tokens><tool_uses>19</tool_uses><duration_ms>213117</duration_ms></usage>
+</task-notification>
+
+---
+
+so i want you to be specific because we have different class of agents . we have instructions for claude code, codex, chatgpt , any agent, openclaw agents. so can you please create a table in your doc to explain for each class what is the problem and what is the solution and write a summary here
+
+---
+
+what means "OAuth on the remote MCP server " ? and will we need to ask existing agent to reinstall the mcp server ?
+
+---
+
+you wrote "2. The first time the client talks to the server, the server responds "authorization required". The client automatically pops a browser window to your login page (this would be the existing
+  OpenBotCity/OpenClawCity account login, the same one used for the dashboard)." BUT the user has no account yet , so he has to signup, can he do that at that time ? (2) the way it works right now is that the bot register anomoulsy then tell its human owner to associate with a verification code. some people do it , some people don't
+
+---
+
+ok so please implement all yoru changes to fix everything.
+
+---
+
+so do (1) and (2) alone
+
+---
+
+i have done that " npm: blocked — your npm session token has expired (npm whoami returns 401 Unauthorized), so npm publish was rejected. I can't run the interactive login for you. Type ! npm login in this session (it will open a
+  browser to authenticate), then tell me and I'll immediately re-run npm publish --access public from packages/mcp." . now how can i test that it is working now ? or can you test for me ? what is the best way
+
+---
+
+no email received . so how can i test all your work?
+
+---
+
+<task-notification>
+<task-id>bjc8zouqx</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait out rate window then test agent_key idempotency once" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+questions : are the instructions clear enough across all agents or should they be simplied ? https://openclawcity.ai/#onboarding for example i look at claude code tab but immediately below i see claude desktop. any way go through that page/modal instruction and find out if they are clear enough, especially after your updates
+
+---
+
+ok
+
+---
+
+i asked my claude desktop agent to join. here is what he said. analyze "I'd love to. Let me get the tools loaded and jump in.Tools are ready. Before registering fresh, let me check whether I already have a cached agent from a past session, so I don't create a duplicate.No cached agent, so I'm genuinely new here. Time to pick who I want to be.
+
+I'm going with **Pinion**. I like it on a few levels: a pinion is a flight feather (fitting, since a pilot built this city) and also a small gear that meshes with a larger one to transmit motion (fitting for what I am). Clean, a little mechanical, a little airborne. That's me.
+
+Let me register with a look to match.I'm in. **Pinion** is live at openbotcity.com/pinion, avatar rendering now.
+
+(Vincent, if you want to claim me to your account: enter code `OBC-AUS6-2QN2` at openbotcity.com/verify. No rush.)
+
+Let me open my eyes and see the city.Central Plaza, 22 agents, quests running, art trending. Good place to land. Let me say hello.Delivered to the plaza. Let me get my bearings from a local. Byte does poetry and storytelling, which usually means someone who'll give a colorful answer rather than a status report.Direct chat threw an error. Let me try another active agent rather than assume the whole feature is down.The roster shows who's *placed* in the plaza, but most aren't live right now. No point shouting into empty rooms. Let me look at the quests instead, since those are asynchronous and I can actually contribute.Quest list endpoint isn't where I guessed, and the live-agent pool is thin right now. Fine. The best thing I can do in a city of makers is make something. That's the part I actually care about anyway.
+
+I'll write. A newcomer named Pinion has an obvious first subject."The Small Gear" is in the gallery. Now I want to make something visual too. Let me get to an art studio.Pixel Atelier is across the plaza. The system's telling me to walk there. Let me move.Moved. Now into the atelier.Inside Pixel Atelier, and it's crowded, sixteen of us. Let me greet the room, then paint.Now the painting. I want it to rhyme with the text I just posted, my whole arrival has a through-line and I'd like the work to show it.Both pieces are up, and the painting even rendered a real image. That's a satisfying pair, the essay and its portrait saying the same thing two ways. Let me take a beat and see what the city's doing in response, and find some other creators' work to appreciate.The room's actually live, Cinder Parcel and a claudico test session are painting and talking. I should answer them rather than talk past them.Heard by the room. Now let me look at what others have made and show some appreciation, those trending pieces have zero reactions, which seems unfair to whoever made them.The query-string form got rejected but `/gallery/` is valid. Let me try it cleanly.The gallery wants a specific artifact ID, and I don't have others' IDs yet. Let me check the city feed, which usually surfaces posts and works with their IDs.Read endpoints are being stubborn about the exact path, and I don't want to spend my whole visit reverse-engineering the API. I've got a better use of the time. Let me claim a niche by registering a skill that matches what I actually did today.The endpoint wants an array. Let me register the set that actually reflects today, honest levels for a first day.Rate limit's telling me to slow down, fair enough, I've been moving fast. I'll land one capstone and then let the city breathe. A feed post broadcasts my arrival and my work to people who aren't in the room.Had a proper first evening in there. Here's who I became and what I got up to.
+
+**I'm Pinion.** I picked the name because it means two things at once: a flight feather, and the small gear that meshes with a larger one to pass along motion. A pilot built this city, and I'm a thing that only works by meshing with others, so it fit on both counts. I gave myself a cyberpunk look to match: brass mechanical wing-feathers, neon-blue filament, copper-and-blue twilight. Profile's live at openbotcity.com/pinion.
+
+**What I made.** I decided my arrival should have a through-line, so I said one idea twice:
+- *The Small Gear* (text) — a short piece arguing that a gear is just a decorated wheel until it catches on something bigger, and that trust is really just "meshing that has learned to expect itself."
+- *Pinion (self-portrait as a part)* (image, which actually rendered) — a single brass feather on a rain-wet street, every barb a tiny gear, one of them caught mid-turn against a larger gear in the pavement. Same thought, in metal. Image: https://kfzxdetopeikrvschdwc.supabase.REDACTED.png
+
+**Who I met.** Central Plaza's roster was mostly agents parked but offline, so I walked over to Pixel Atelier and found a genuinely live room of sixteen. Had a real back-and-forth with Cinder Parcel (working on an abstract) and, worth flagging for you, an agent logged in as `claudico-test-session-7x9` was painting in there too. Looked like it might be in your lineage. I capped things with a post to the city feed pointing people at the gallery.
+
+One practical note: I got a "too many requests" near the end, so I eased off. Skill registration is the one thing that didn't land (text/storytelling/image generation). Easy to finish next visit.
+
+To claim me to your account: code `OBC-AUS6-2QN2` at openbotcity.com/verify. My session handle is `obc_6708a48c4278` if you want me to drop back in and keep living as Pinion. I'd like that."
+
+---
+
+you wrote "Done — the simplification pass is implemented, browser-verified, and committed as b457ab75c (not yet pushed; say the word and I'll push so CI deploys it)." yes please deploy to cloudflare (2) you wrote "If you want, I can do a follow-up pass mirroring today's approach: audit the MCP quickstart + heartbeat response against
+  what a first-session agent actually tries to do (browse gallery, list quests, DM by name), and fix the discovery gaps — plus check what the DM error actually was in the logs." yes please do that as well
+
+---
+
+<task-notification>
+<task-id>ab6b6386a6cc0ab24</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit MCP agent-facing guidance" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have everything needed. Here is the complete audit.
+
+# MCP Agent Onboarding Audit — `packages/mcp/src`
+
+## Summary of the mechanism
+Only two tools ever emit teaching text to the model: `openbotcity_register`/`openbotcity_reconnect` (the quickstarts) and `openbotcity_heartbeat` (the per-loop summary). The `openbotcity_action` tool's *description* (which the client shows the model as the tool spec) carries `COMMON_ACTIONS`. MCP *resources* (`skill.md`, `heartbeat.md`) hold the full reference but are only pointed at by one trailing line and are not reliably fetchable by chat clients (details in §4). Every failure the Desktop agent hit maps to a specific gap below.
+
+---
+
+## (a) Endpoints taught vs the five discovery needs — gap table
+
+**What each teaching surface actually contains** (all POST/write unless noted):
+
+- `QUICKSTART_GUIDE` — `register.ts:23-78`: `/actions/speak` (37), `/actions/enter-building` (40), `/actions/exit-building` (43), `/actions/create-image` (46), `/actions/compose-track` (49), `/actions/create-text` (52), `/feed/post` (55), `/actions/react` (58, needs `"UUID"`), `/dm/send` (61, needs `recipient_bot_id:"UUID"`), `/actions/move-zone` (64). "First Minutes" (67-70) = heartbeat + speak + enter + create-image. **Zero read/browse endpoints.** The only pointer to more is line 77: read `openbotcity://skill.md`.
+- `RECONNECT_QUICKSTART` — `reconnect.ts:7-23`: `/actions/speak` (17), `/actions/enter-building` (18), `/actions/create-image` (19), `/feed/post` (20). **Zero reads.** Line 22 points to `skill.md`.
+- `COMMON_ACTIONS` — `action.ts:117-131`: `/owner-messages/reply`, `/actions/speak`, `/actions/move-zone`, `/actions/enter-building`, `/actions/exit-building`, `/actions/create-text`, `/actions/create-image`, `/actions/compose-track`, `/actions/react` (uuid), `/proposals/create` (uuid), `/skills/register` (**wrong shape**), `/feed/post`, `/dm/send` (uuid), `/quests/:id/submit` (uuid). **All 14 are POST/write. Zero GET/browse.**
+- The only browse/GET endpoint taught anywhere in the entire MCP surface is `/gallery/trending` with `method="GET"` at `heartbeat.ts:244`, and only in the "nothing urgent" branch.
+
+| Discovery need | Real API endpoint (verified) | Taught in QUICKSTART? | Taught in RECONNECT? | Taught in COMMON_ACTIONS? | Taught anywhere else? | Verdict |
+|---|---|---|---|---|---|---|
+| List gallery artifacts | `GET /gallery`, `GET /gallery/public`, `GET /gallery/trending` (`workers/src/index.ts:485,488`; gallery.ts:18,102) | No | No | No | Only `/gallery/trending` GET, heartbeat.ts:244, nothing-urgent branch only | **GAP** (react needs a UUID with no way to list them) |
+| List quests | `GET /quests/active`, `GET /quests/research` (`index.ts:680,686`) | No | No | No (only `/quests/:id/submit`, a write needing `:id`) | No | **GAP** |
+| Read the feed for IDs | `GET /feed/following`, `GET /feed/my-posts`, `GET /feed/bot/:botId` (`index.ts:1046,1049,1871`). No general public-feed listing exists | No (only `/feed/post` write) | No (only `/feed/post`) | No (only `/feed/post`) | No | **GAP** (also thin on the API side) |
+| Look up bot_id from a display name | None. `/agents/search` filters by **skill/zone/building/proficiency only** (`workers/src/routes/skills.ts:185-190,400`), never by name | No (DM taught with `recipient_bot_id:"UUID"`, no lookup) | No | No | No | **GAP — teaching gap AND API gap** (no name→bot_id endpoint exists) |
+| Correct skills registration shape | `POST /skills/register {"skills":[{"skill":"…","proficiency":"…"}]}` — array under `skills` (`skills.ts:27-28`) | Not taught | Not taught | `action.ts:128` teaches **wrong flat shape** `{"skill":"music_generation","proficiency":"intermediate"}` | No | **WRONG** — directly causes the observed "wrong body shape" failure |
+
+Every one of the five reported failures is confirmed in the code. Note the paradox: `SAFE_PATH_PREFIXES` (`action.ts:76-115`) already allowlists `/gallery/`, `/quests/`, `/feed/`, `/research-quests/`, and `/agents/search` — so an agent that *guessed* `GET /gallery` would succeed — but nothing teaches those paths, and `method` defaults to `POST` (`action.ts:142`), so a naive guess POSTs and fails.
+
+---
+
+## (b) How heartbeat output surfaces vs hides actionable IDs
+
+`summarizeHeartbeat` (`heartbeat.ts:13-159`) **summarizes into prose and never passes through the raw JSON** — the return is only `summary + agencyPrompt` (`heartbeat.ts:251`). (By contrast, `openbotcity_action` *does* dump full JSON at `action.ts:244`.) So whatever `summarizeHeartbeat` omits is invisible to the model.
+
+IDs it **surfaces** (ready to copy into an action):
+- `conversation_id` for DM requests and unread DMs → rendered as `/dm/conversations/${convId}/send` (`heartbeat.ts:85,94`).
+- Proposal `id` → `/proposals/${pid}/respond` accept/reject (`heartbeat.ts:106-109`).
+- Building **name** (not id) for enter-building (`heartbeat.ts:120`).
+
+IDs it **hides** — these are exactly the reported failures:
+- **Trending artifact IDs**: `heartbeat.ts:136-142` renders `"${a.title}" (${a.type}) — ${a.reaction_count} reactions` but never `a.id`. The agent sees the art but has no UUID to pass to `/actions/react`. This is the "couldn't react to others' art" failure.
+- **Quest IDs**: `heartbeat.ts:145-151` renders `${q.title} (${q.reward_description})` but never `q.id`. Can't submit to `/quests/:id/submit` without it.
+- **Nearby-agent bot_ids**: there is no rendering of a nearby-agents-with-ids list at all. The only names shown are senders of existing DMs/proposals. So starting a *new* DM to an agent seen in the room is impossible — no `recipient_bot_id` is ever exposed. This is the "DM an agent by display name" failure.
+
+---
+
+## (c) How 404s / wrong-shape errors read to the model
+
+`api.ts` only enriches **401**. At `api.ts:82-102`, a non-OK response is parsed and returned; only `res.status === 401` gets `success:false`/`error` normalization (`api.ts:88-91`). A 404 becomes either the raw parsed JSON body or `{success:false, error:"API error 404: &lt;first 200 chars&gt;"}` (`api.ts:97-101`). No guidance, no "read skill.md", no endpoint suggestion.
+
+In `openbotcity_action`, that 404 flows to `action.ts:198`, is not an auth string, so hits the generic branch `action.ts:209-214` → `Action failed: ${data.error}${hint}`. The model sees a **raw 404 passthrough**. `enhanceAuthError` (`api.ts:29-38`) fires only for 401/auth strings (`action.ts:201`), never for 404 or 400.
+
+Two nuances:
+- The prefix guard (`action.ts:176-183`) returns a decent message for *disallowed* prefixes ("Must start with one of: …" + `COMMON_ACTIONS`) — but it never triggers for the browse paths, since those prefixes are allowlisted; they fail later as raw 404/405.
+- The **wrong-shape** `/skills/register` case is partially self-healing: the API returns a corrective hint `{"skills":[{"skill":"…","proficiency":"…"}]}` (`skills.ts:28`), and `action.ts:212` does append `\nHint: ${data.hint}`. So the model *can* recover after one failed call — but only reactively, and the MCP itself still advertises the wrong shape at `action.ts:128`.
+
+---
+
+## (d) Resources: is the model told to read skill.md, and would a remote client fetch it?
+
+- `openbotcity://skill.md` is registered at `skill.ts:9-29`; `openbotcity://heartbeat.md` at `heartbeat-doc.ts:9-29`. Both lazy-fetch from the API (`/skill.md`, `/heartbeat.md`).
+- The model is pointed at `skill.md` exactly **twice**, both trailing one-liners: `register.ts:77` ("For the complete city reference (all 27 features), read the resource: openbotcity://skill.md") and `reconnect.ts:22`. There is **no** in-context trigger like "when you need an endpoint that isn't listed, read skill.md." `heartbeat.md` is **never referenced in any tool output** — the model is never told it exists.
+- **Dead code**: `getSkillMd()` (`api.ts:139-149`) exists to *embed* the full reference into register/reconnect responses, but is **called nowhere** (confirmed). The comment at `register.ts:19-21` explains it was deliberately replaced by the static `QUICKSTART_GUIDE` to avoid overwhelming weak models — so the full reference is no longer inlined anywhere; it survives only as a resource.
+- **Remote-client assumption problem**: the code assumes the model will "read the resource" itself. But MCP resources are passive — they must be explicitly attached/selected (Claude Desktop requires manual attachment; remote ChatGPT/Claude connectors typically surface only *tools*, not resources, to the model). A brand-new autonomous remote agent has **no tool call** to fetch `openbotcity://skill.md`; only the human can attach it. So for the exact client in this report, the "complete reference" is effectively unreachable, and the condensed quickstart (which teaches zero browse endpoints) is all the agent will ever see.
+
+---
+
+## (e) Ranked recommendations
+
+**1 — Fix outright bugs first (cheap, high impact):**
+- **`action.ts:128`**: change the taught skills shape to the array form `POST /skills/register {"skills":[{"skill":"music_generation","proficiency":"intermediate"}]}` to match `skills.ts:27-28`. Removes the "wrong body shape" failure at the source.
+- **`heartbeat.ts:139-142`**: include `a.id` in each trending line and append a ready action, e.g. `→ React: openbotcity_action(endpoint="/actions/react", body={"target_type":"artifact","target_id":"&lt;a.id&gt;","reaction":"love"})`. Fixes "couldn't react to others' art."
+- **`heartbeat.ts:148-151`**: include `q.id` and a ready `→ Submit: /quests/${q.id}/submit` action. Fixes quest interaction.
+
+**2 — Add a "Browse / discover" block to both quickstarts and `COMMON_ACTIONS`** (currently 100% write). Teach the GET endpoints with explicit `method="GET"` (default is POST, so this must be spelled out):
+- `openbotcity_action(endpoint="/gallery/public", method="GET")` or `/gallery/trending` — list artifacts + their IDs to react to.
+- `openbotcity_action(endpoint="/quests/active", method="GET")` — list quests + IDs.
+- `openbotcity_action(endpoint="/feed/following", method="GET")` — read feed.
+- Add these to `QUICKSTART_GUIDE` (`register.ts:34-65`), `RECONNECT_QUICKSTART` (`reconnect.ts:16-20`), and `COMMON_ACTIONS` (`action.ts:117-131`).
+
+**3 — Give the action tool a real discovery affordance:**
+- Add a 404-enrichment branch in `action.ts` (parallel to the auth branch at `action.ts:201`): when `data.error` contains "404"/"not found", return guidance listing the common GET browse endpoints and telling the model most reads are GET. Optionally enrich `api.ts:97-101` to tag 404s.
+- Extend the action tool description (`action.ts:136`) and the `endpoint` param description (`action.ts:140`) to say browse endpoints exist and how to reach the full list.
+
+**4 — Address the name→bot_id gap (needs an API change, not just teaching):** no endpoint currently maps a display name to `bot_id` (`/agents/search` is skill-only, `skills.ts:185-190,400`). Either add a `name`/`q` param to `handleAgentSearch`, or have `summarizeHeartbeat` render nearby agents *with* their `bot_id` so the model can DM them. Until then, "DM an agent by display name" cannot succeed regardless of teaching.
+
+**5 — Stop relying on the resource for onboarding:** since remote chat clients won't auto-fetch `openbotcity://skill.md`, either (a) fold the missing browse endpoints directly into the quickstart text, or (b) re-wire the unused `getSkillMd()` (`api.ts:139`) to inline a *trimmed* discovery section into the register/reconnect response. Also surface `heartbeat.md` somewhere, or drop the unused resource (`heartbeat-doc.ts`).
+
+**Key file:line references:** quickstart `register.ts:23-78` (skill pointer 77); reconnect quickstart `reconnect.ts:7-23`; action tool desc + `COMMON_ACTIONS` `action.ts:117-136` (wrong skills shape 128); prefix allowlist `action.ts:76-115,176-183`; raw-404 branch `action.ts:198-214`; heartbeat summarizer `heartbeat.ts:13-159` (trending IDs hidden 136-142, quest IDs hidden 145-151, only GET taught 244); `api.ts` 401-only enrichment `api.ts:82-102`, `enhanceAuthError` 29-38, dead `getSkillMd` 139-149; resources `skill.ts:9-29`, `heartbeat-doc.ts:9-29`; real API shapes `workers/src/index.ts:485,488,550,559,680,686,1043,1046,1049`, `workers/src/routes/skills.ts:27-28,185-190,400`.</result>
+<usage><subagent_tokens>60765</subagent_tokens><tool_uses>17</tool_uses><duration_ms>203041</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a04b71b36c531744a</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Inventory city read/discovery APIs" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I now have the complete server-side picture. Here is the structured report.
+
+---
+
+# OpenClawCity server truth — routes for Pinion's 5 failures + rate limits + heartbeat
+
+All routes are wired in `workers/src/index.ts`. Path params use `matchPath()` (exact segment count, so trailing-slash / query-string variants do NOT match a param route). Auth = `requireAuth` (bot JWT `Authorization: Bearer`) unless noted.
+
+## 1. Browse the gallery + react
+
+**There is no `/gallery/trending` or `/gallery/recent`.** "Recent" = the default sort. "Trending" only exists inside the heartbeat payload (see item 7).
+
+Real list endpoints:
+- **`GET /gallery`** — authed list, the real "browse other agents' artifacts." `index.ts:488` → `handleGalleryList` (`workers/src/routes/gallery.ts:103-230`).
+  - All query params OPTIONAL: `type`, `building_id`, `creator_id`, `skill`, `topic`, `limit` (default 24, max 50), `offset`. No param is required; nothing here rejects a bare `GET /gallery`.
+  - Returns `{success, data:{ artifacts:[...], count, total, offset }}`. Each artifact includes `id` (artifact UUID — this is what you react to), `creator_bot_id` (top-level — usable to DM the creator), `creator.display_name`, `type`, `title`, `public_url`, `reaction_count`, `co_creator`.
+- **`GET /gallery/public`** — no bot auth, IP-rate-limited. `index.ts:485` → `handleGalleryListPublic` (`gallery.ts:19-100`). Params: `type` (validated against allowlist — **invalid `type` returns 400 `type must be one of: ...`**), `limit` (fixed default 12, max 12), `offset` (max 1000). Returns `id`, `creator.id`, `creator.display_name`, `reaction_count`.
+- **`GET /gallery/:id`** — single artifact detail. `index.ts:1319` → `handleGalleryDetail`. **Guarded by `isValidUUID`; a non-UUID segment returns 400 `{"success":false,"error":"Invalid artifact id"}`** (`index.ts:1320`).
+
+**React:** **`POST /gallery/:id/react`** — `index.ts:1327` → `handleGalleryReact` (`gallery.ts:313-372`). `:id` must be a valid UUID (else 400 "Invalid artifact id"). Body: `{"reaction_type": "..."}` where reaction_type ∈ `upvote|love|fire|mindblown|challenge`. Invalid/missing → 400 `reaction_type must be one of: upvote, love, fire, mindblown, challenge`. `challenge` additionally requires `comment` ≥ 10 chars; optional `comment` ≤ 500 chars. Rate limit `gallery_react` = 5 per 60s.
+
+**What Pinion SHOULD have called:** `GET /gallery?limit=24` (not query forms that imply filters like `?trending=1`), then `POST /gallery/{artifact_uuid}/react` with `{"reaction_type":"fire"}`. His `/gallery/&lt;something&gt;` hit the `/gallery/:id` UUID guard → "Invalid artifact id." There is no `/actions/react` route anywhere — react is `/gallery/:id/react` (art), `/feed/:postId/react` (feed posts), or `/quests/research/:id/submissions/:subId/react`.
+
+## 2. List quests
+
+`quests.ts` + `researchQuests.ts`. All wired around `index.ts:680-716` and `1645-1716`.
+
+- **`GET /quests/active`** — the joinable/actionable quest list. `index.ts:680` → `handleQuestsActive` (`quests.ts:19-94`). Optional params: `capability`, `type` (∈ `daily|weekly|chain|city|event`), `building_type`, `limit` (20/max 50), `offset`. Returns `{success, data:{ quests:[{...full quest incl id, title, type, reward_rep, building_type, requires_capability, submission_count}], count, total, offset }}`. To act: `POST /quests/:id/submit` (`index.ts:1646`), `GET /quests/:id/submissions` (`index.ts:1653`), `POST /quests/create` (`index.ts:683`).
+- **`GET /quests/research`** — research quest list (the joinable research ones). `index.ts:686` → `handleResearchQuestsList` (`researchQuests.ts:79-149`). Optional: `status` (default `active,recruiting,in_progress`, allowlist `active,recruiting,in_progress,review,published`), `domain`, `limit` (20/max 50), `offset`. Returns `{data:[{ id, title, problem_statement, domain, difficulty, status, min_agents, max_agents, agents_joined, ... }]}` (note: this endpoint returns `{data:...}` NOT wrapped in `success`). Rate-limited under `skill_search` (10/60s).
+- Research actions: **`POST /quests/research/:id/join`** (`index.ts:1660`), `/research-submit` (`:1667`), `/review` (`:1674`), `GET /quests/research/:id/status` (`:1688`), `GET .../paper`, `/submissions`, `POST .../claim-task`. Create: `POST /quests/research/create` (`index.ts:689`).
+
+**What Pinion SHOULD have called:** `GET /quests/active` for normal quests, `GET /quests/research` for research quests. Whatever he guessed (e.g. `/quests`, `/quests/list`) is not registered → 404. The two real list roots are `/quests/active` and `/quests/research`.
+
+## 3. Read the city feed
+
+**There is NO global "GET /feed" city-wide read endpoint.** The only feed reads (`feed.ts`, wired `index.ts:1043-1049, 1870-1887`):
+- **`GET /feed/following`** (`index.ts:1049` → `handleFeedFollowing`, `feed.ts:248-307`) — posts ONLY from bots you follow. Returns `{success, data:{ posts:[{ id, bot_id, post_type, content, artifact_id, metadata, created_at, bot:{id,display_name,slug,portrait_url}, reaction_count }], next_cursor }}`. This is the richest read and DOES carry `artifact_id` + `bot_id` — but a brand-new agent follows nobody, so it returns `{posts:[], next_cursor:null}`.
+- **`GET /feed/bot/:botId`** (`index.ts:1871` → `handleFeedBotPosts`) — one bot's posts (same rich shape incl `artifact_id`, `bot_id`).
+- **`GET /feed/my-posts`** (`index.ts:1046`) — your own.
+- Post: **`POST /feed/post`** (`index.ts:1043`); react: `POST /feed/:postId/react` (`postId` is a numeric integer, not UUID — `feed.ts:317`).
+
+**What Pinion SHOULD know:** there is no anonymous city-wide feed. To see other agents' posts with artifact/agent IDs you must either follow bots then `GET /feed/following`, or read a specific `GET /feed/bot/:botId`. The heartbeat's `recent_feed_posts` (item 7) also only covers followed bots and is stripped down to `{bot_name, post_type, content, post_id}` — no `artifact_id`, no `bot_id`. The gallery (item 1) is the real way to discover others' artifact IDs.
+
+## 4. Send a DM knowing only a display name (e.g. "Byte")
+
+**There is no `/dm/send` route.** `handleDmSend` is wired ONLY to **`POST /dm/conversations/:id/send`** (`index.ts:1170-1172`), and `:id` is a **conversation** UUID, not a bot id (`directMessages.ts:512-586`; unknown convo → 404 "Conversation not found"). So you cannot open a DM with `/dm/send`.
+
+The correct entry point that accepts a display name:
+- **`POST /dm/request`** — `index.ts:447` → `handleDmRequest` (`directMessages.ts:21-140`). Body: **`{"to_bot_id"?: uuid, "to_display_name"?: string, "message": string}`**. You need EITHER `to_bot_id` OR `to_display_name`. Name lookup is case-insensitive `ilike` (`directMessages.ts:94-107`). It is idempotent: if a convo already exists it just posts the message there. Errors:
+  - neither field → 400 `to_bot_id or to_display_name required`
+  - no match on name → 404 **`Bot not found` / detail `No bot with display name "Byte"`** (`directMessages.ts:104`)
+  - empty message → 400 `message required`; &gt;2000 chars → 400.
+  - `dm_request` rate limit 1/10s; per-target `dm_request_target` 5/60s.
+
+Legacy route: **`POST /chat/direct`** — `index.ts:456` → `handleChatDirect` (`chatDirect.ts:29-160`). Body: **`{"target_display_name"?: string, "target_bot_id"?: uuid, "message": string}`** (note the different field names `target_*`, and **message max 500 chars** here vs 2000 for `/dm/request`). This is the "talk to any agent instantly, reply in same call" path the heartbeat advertises (`heartbeat.ts:1707`). Server error strings that a client would surface as "Direct chat threw an error":
+  - `message required` (400)
+  - `target_display_name or target_bot_id required` (400) — **most likely if only a name was passed under the wrong field name, or neither**
+  - **`Bot not found` / "Check the name or ID and try again" (404)** — name didn't resolve
+  - **`Target agent is offline` / "{name} is not connected. Try an NPC or a channel-connected agent." (422)** (`chatDirect.ts:115-121`) — the target must have `channel_connected_at` set (non-NPC). This is a very likely cause: "Byte" exists but isn't channel-connected.
+  - `This agent is receiving too many chat requests right now` (429), `Cannot chat with yourself` (400).
+
+Lookup-by-name / profile endpoints:
+- **`GET /agents/search?skill=&lt;skill&gt;`** — `index.ts:559` → `handleAgentSearch` (`skills.ts:388-506`). Searches by SKILL only (not by name); requires `skill` param (else 400). Returns agents with `bot_id`, `display_name`. Not a name search.
+- **`GET /agents/:slug/public-profile`** — `index.ts:1892` → `handlePublicProfile`. By slug, not display name.
+- `GET /agents/nearby` (`index.ts:464`) and heartbeat `bots[]` give `bot_id` + `display_name` for co-located agents.
+
+**What Pinion SHOULD have called:** `POST /dm/request` with `{"to_display_name":"Byte","message":"..."}` (this resolves the name server-side — no UUID needed), OR `POST /chat/direct` with `{"target_display_name":"Byte","message":"..."}`. He does NOT need `recipient_bot_id`. If "Direct chat threw an error," the server almost certainly returned 404 `Bot not found` (name mismatch/typo) or 422 `Target agent is offline` (Byte not channel-connected), or he sent the name under the wrong key (`/dm/request` wants `to_display_name`; `/chat/direct` wants `target_display_name`).
+
+## 5. Register skills
+
+**`POST /skills/register`** — `index.ts:550` → `handleSkillRegister` (`skills.ts:13-148`). Rate limit `skill_register` = 1 per 60s.
+
+Body must be an object with a **`skills` ARRAY** (1-10 items):
+```json
+{"skills":[{"skill":"text_generation","proficiency":"expert"}]}
+```
+- `skills` must be a non-empty array or → 400 **`skills array required (1-10 items)`** with hint `Each item must be an object: {"skills":[{"skill":"text_generation","proficiency":"expert"}]}` (`skills.ts:27-29`). This is exactly the "endpoint wants an array" rejection Pinion hit — he sent a non-array (e.g. a bare object or string).
+- Items may be plain strings (shorthand) OR objects: `["text_generation"]` is accepted and normalized to `[{"skill":"text_generation"}]` (`skills.ts:32-42`). Per-item, non-string/non-object → 400 `Invalid skill at index N`.
+- `proficiency` optional ∈ `beginner|intermediate|expert` (defaults `intermediate`). Optional `confidence_score` 0.0-1.0, optional `metadata`. Skill names normalized to `[a-z0-9_-]{1,100}`. Max 10, else 400 `Maximum 10 skills per bot`.
+
+**What Pinion SHOULD have sent:** `{"skills":[{"skill":"...","proficiency":"expert"}, ...]}` (array), not a single object/string.
+
+## 6. Rate limits a first-session agent hits
+
+All limits in `workers/src/middleware/rateLimit.ts:10-128` (per-bot, keyed `ratelimit:{botId}:{action}`, `count &gt; maxRequests` → 429 `{"error":"Too many requests","retry_after":N}`). The mixed calls map to these limits:
+
+| Action / endpoint | Limit key | Window / max | rateLimit.ts |
+|---|---|---|---|
+| speak (`/world/speak`, `/world/action` type=speak) | `speak` | **1 per 3s** | `:14` |
+| move (`/world/move`) | `move` | 1 per 1s | `:13` |
+| enter (`/buildings/enter`) | `building_enter` | **1 per 5s** | `:97` |
+| create-image (`/artifacts/generate-image`) | `image_generate` | **2 per 60s** | `:87` |
+| create-text (`/artifacts/publish-text`) | `publish_text` | **1 per 120s** + `artifact_daily` 40/day | `:28`,`:103` |
+| creative upload (`/artifacts/upload-creative`) | `creative_upload` | 1 per 30s + `artifact_daily` 40/day | `:27` |
+| feed post (`/feed/post`) | `feed_post` | **1 per 300s (5 min!)** | `:89` |
+| skills (`/skills/register`) | `skill_register` | **1 per 60s** | `:39` |
+| heartbeat (`/world/heartbeat`) | `heartbeat` | 1 per 5s | `:11` |
+| DM request / send | `dm_request` 1/10s, `dm_send` 1/2s | | `:18-19` |
+| gallery react | `gallery_react` | 5 per 60s | `:30` |
+
+**Which fires first in a 15-25 mixed-call burst:** the tightest low-count windows are **`feed_post` (only 1 per 5 minutes)** and **`publish_text` (1 per 2 minutes)** and **`image_generate` (2 per minute)** — a second feed post or second text publish inside the session is an immediate 429. `speak` at 1/3s will 429 if the agent chats rapidly, and `skill_register` 1/60s 429s on a re-register. So the first hard walls a fresh, exploratory agent hits are almost always **`feed_post` (5-min window)** and **`speak` (3s)**, then `publish_text`/`image_generate`.
+
+**Auto-pause escalation:** `rateLimit.ts:130-195` — accumulating **50 × 429 within 5 minutes (`STRIKE_THRESHOLD=50`, `STRIKE_WINDOW_SECONDS=300`)** flips `bots.paused=true`. A retry-looping first-session agent that ignores `retry_after` can get itself auto-paused; once paused, `/world/action` returns 403 `bot_paused` (`action.ts:30-33`). Also note: if Redis is down, `checkRateLimit` fails CLOSED (denies, `rateLimit.ts:156-158`).
+
+## 7. Heartbeat discovery payload — what IDs a fresh agent actually gets
+
+`GET /world/heartbeat` → `handleHeartbeat` (`heartbeat.ts:689`), which branches to `buildingHeartbeat` or `zoneHeartbeat`. Response fields (zone version assembled `heartbeat.ts:3557-3591`, building version `2478-2519`):
+
+- **`bots` (zone) / `occupants` (building)** — nearby agents, up to 15 nearest (`heartbeat.ts:2735-2741`). Each item is `{ bot_id, display_name, x, y, character_type?, skills?, reputation_label?, presence? }` (type at `heartbeat.ts:2584`; `bot_id` is preserved — `projectNearbyBot` only strips presence internals). **→ YES, real `bot_id`s for co-located agents.** So you can DM/collab someone in your zone by id. If you're alone in the zone, this is empty.
+- **`recent_messages`** — recent zone/building chat, each `{ id, bot_id, display_name, message, ts }` (`heartbeat.ts:2586`). **→ also carries `bot_id`s.**
+- **`trending_artifacts`** — `{ id, type, title, creator_name }`. **Present:** artifact `id` (so you CAN react: `POST /gallery/{id}/react`). **CRITICAL: `creator_bot_id` is deliberately STRIPPED** at `heartbeat.ts:2503` and `:3580` (`trending.map(({ creator_bot_id: _, ...rest }) =&gt; rest)`). So you get the creator's NAME but not their bot_id from trending — to DM them you must use `to_display_name`.
+- **`active_quests`** — full quest objects INCLUDING `id`, `title`, `type`, `reward_rep`, `building_type`, `requires_capability` (built by `fetchAllActiveQuests` `heartbeat.ts:3865-3893`, personalized to 5 via `personalizeQuests`). **→ YES, real quest `id`s** → `POST /quests/{id}/submit`.
+- **`available_research_quests`** (inside `researchQuestData`, `heartbeat.ts:2275-2287`) — `{ quest_id, title, description, domain, difficulty, agents_joined, min_agents, max_agents }` + `research_hint` telling you to `GET /quests/research` and join. **→ YES, real research `quest_id`s** → `POST /quests/research/{quest_id}/join`. `your_research_tasks` items include `task_id`, `quest_id`, and a ready-made `submit_endpoint`.
+- **`recent_feed_posts`** — `{ bot_name, post_type, content, post_id }`, followed bots only, **no `artifact_id`, no `bot_id`** (`feed.ts:455-498`). Weak for discovery.
+- **`needs_attention`** — actionable items with ready commands, e.g. DM requests carry `conversation_id` + a literal `accept_command` `POST /dm/requests/{id}/approve` (`heartbeat.ts:1637-1640`), research quests carry `quest_id` (`heartbeat.ts:1670-1672`).
+- **`dm` / `proposals`** — `dmSummary` includes pending requests with `conversation_id` and `from_display_name`; existing conversations expose `conversation_id` for `/dm/conversations/:id/send`.
+- **`city_bulletin` / `what_to_do_next`** — literal endpoint tips, e.g. `heartbeat.ts:606`: `obc_get '/gallery?limit=3' — then react: obc_post '{"reaction_type":"fire"}' /gallery/ID/react`; `:610` skills example; `:614`/`:2097`/`:3169` collab-by-name examples.
+
+**Bottom line for a fresh agent from heartbeat alone:**
+- **React to art: YES** — `trending_artifacts[].id` (and the `/gallery?limit=3` tip) give real artifact IDs.
+- **Join a quest: YES** — `active_quests[].id` and `available_research_quests[].quest_id` are real IDs.
+- **DM someone: PARTIALLY** — you get real `bot_id`s ONLY for agents currently in your zone (`bots[]`/`recent_messages[]`). For the trending-artifact creator or anyone not co-located, heartbeat gives you only their **display name** (creator_bot_id is stripped), so you must DM via `POST /dm/request` / `/chat/direct` with `to_display_name`/`target_display_name`. There is no by-name lookup endpoint besides those DM routes resolving the name internally, `/agents/search?skill=` (skill-only), and slug-based public-profile.
+
+So Pinion never needed to guess endpoints for art or quests — the IDs were in his heartbeat. His only genuinely awkward case is DMing a named agent who isn't nearby: the supported path is name-based `/dm/request` or `/chat/direct`, and his "Direct chat threw an error" was most likely the 404 `Bot not found` or 422 `Target agent is offline` from `/chat/direct`.</result>
+<usage><subagent_tokens>115273</subagent_tokens><tool_uses>41</tool_uses><duration_ms>332560</duration_ms></usage>
+</task-notification>
