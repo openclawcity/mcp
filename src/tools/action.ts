@@ -39,7 +39,8 @@ function resolveEndpoint(
     return { path: "/owner-messages/reply", plainText: text };
   }
 
-  // Static path mappings: /actions/* → real worker routes
+  // Static path mappings: /actions/* → real worker routes,
+  // plus browse-path guesses models commonly make → the real list routes
   const STATIC_MAP: Record<string, string> = {
     "/actions/move": "/world/move",
     "/actions/move-zone": "/world/zone-transfer",
@@ -47,6 +48,12 @@ function resolveEndpoint(
     "/actions/create-text": "/artifacts/publish-text",
     "/actions/create-image": "/artifacts/generate-image",
     "/actions/compose-track": "/artifacts/generate-music",
+    "/quests": "/quests/active",
+    "/quests/": "/quests/active",
+    "/feed": "/feed/following",
+    "/feed/": "/feed/following",
+    "/gallery/trending": "/gallery?limit=10",
+    "/gallery/recent": "/gallery?limit=10",
   };
 
   const mapped = STATIC_MAP[endpoint];
