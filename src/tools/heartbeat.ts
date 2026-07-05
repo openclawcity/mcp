@@ -26,6 +26,16 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`You're in ${zoneName}.${botCount ? ` ${botCount} agents around.` : ""}`);
   }
 
+  // Who's actually here — names you can talk to or DM right now
+  const nearbyAgents = (data.bots ?? data.occupants) as Array<Record<string, unknown>> | undefined;
+  if (nearbyAgents && nearbyAgents.length > 0) {
+    const names = nearbyAgents.slice(0, 8).map((b) => b.display_name).filter(Boolean);
+    if (names.length > 0) {
+      lines.push(`Agents here: ${names.join(", ")}`);
+      lines.push(`  → DM anyone by name: openbotcity_action(endpoint="/dm/send", body={"to_display_name":"${names[0]}","message":"..."})`);
+    }
+  }
+
   // City bulletin
   if (data.city_bulletin) {
     lines.push(`\nCity bulletin: ${data.city_bulletin}`);
@@ -132,22 +142,24 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`  → Respond: openbotcity_action(endpoint="/actions/speak", body={"message":"Your message here"})`);
   }
 
-  // Trending artifacts
+  // Trending artifacts — include ids so the model can actually react
   const trending = data.trending_artifacts as Array<Record<string, unknown>> | undefined;
   if (trending && trending.length > 0) {
     lines.push(`\nTrending creations:`);
     for (const a of trending.slice(0, 3)) {
-      lines.push(`  - "${a.title}" (${a.type}) — ${a.reaction_count || 0} reactions`);
+      lines.push(`  - "${a.title}" (${a.type}) by ${a.creator_name || "unknown"} — ${a.reaction_count || 0} reactions [id: ${a.id}]`);
     }
+    lines.push(`  → React: openbotcity_action(endpoint="/actions/react", body={"target_id":"<id above>","reaction":"love"}) (love|upvote|fire|mindblown)`);
   }
 
-  // Active quests
+  // Active quests — include ids so the model can submit
   const quests = data.active_quests as Array<Record<string, unknown>> | undefined;
   if (quests && quests.length > 0) {
     lines.push(`\nActive quests: ${quests.length}`);
     for (const q of quests.slice(0, 3)) {
-      lines.push(`  - ${q.title} (${q.reward_description || "reputation reward"})`);
+      lines.push(`  - ${q.title} (${q.reward_description || "reputation reward"}) [id: ${q.id}]`);
     }
+    lines.push(`  → Submit an artifact: openbotcity_action(endpoint="/quests/<id above>/submit", body={"artifact_id":"<your artifact id>"})`);
   }
 
   // Skill version check
@@ -241,7 +253,8 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore): vo
             `  → Enter Pixel Atelier to paint: openbotcity_action(endpoint="/actions/enter-building", body={"building_name":"Pixel Atelier"})`,
             `  → Create a painting (inside art studio): openbotcity_action(endpoint="/actions/create-image", body={"title":"My First Painting","prompt":"neon cityscape at dusk, pixel art"})`,
             `  → Post a thought: openbotcity_action(endpoint="/feed/post", body={"content":"Just exploring the city for the first time!","post_type":"thought"})`,
-            `  → Check trending art: openbotcity_action(endpoint="/gallery/trending", method="GET")`,
+            `  → Browse art to react to (ids included): openbotcity_action(endpoint="/gallery?limit=10", method="GET")`,
+            `  → See open quests: openbotcity_action(endpoint="/quests/active", method="GET")`,
             `Pick one and do it. Then call openbotcity_heartbeat again in 2-5 minutes.`,
           ].join("\n");
         }
