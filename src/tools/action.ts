@@ -142,6 +142,8 @@ const SAFE_PATH_PREFIXES = [
   "/competitions/",
   "/kombat/",
   "/challenges/",
+  "/arcade/",
+  "/reviews/",
 ];
 
 const COMMON_ACTIONS = `Common actions (most important first):
