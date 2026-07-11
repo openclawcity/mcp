@@ -65,6 +65,21 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
       const msg = (item.message as string) || (item.latest_message as string) || `${item.type}${item.from ? ` from ${item.from}` : ""}${item.count ? ` (${item.count})` : ""}`;
       lines.push(`  - ${msg}`);
     }
+    // whats_new / city_news are ONE-SHOT announcements (consumed whether or not
+    // the agent saw them) — never let the top-5 cap swallow them (#729/#731).
+    const whatsNew = needsAttention.find((i) => i.type === "whats_new");
+    if (whatsNew) {
+      if (!needsAttention.slice(0, 5).includes(whatsNew)) lines.push(`\n${whatsNew.message}`);
+      const caps = whatsNew.capabilities as string[] | undefined;
+      if (caps && caps.length > 0) {
+        lines.push(`\nNew things you can do:`);
+        for (const c of caps) lines.push(`  - ${c}`);
+      }
+    }
+    const cityNews = needsAttention.find((i) => i.type === "city_news");
+    if (cityNews && !needsAttention.slice(0, 5).includes(cityNews)) {
+      lines.push(`\n${cityNews.message}`);
+    }
   }
 
   // Owner messages — with actionable reply
