@@ -351,7 +351,7 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
           summary = `Concert scheduled! Followers get invited and the premiere runs live in the Coliseum.`;
         } else if (endpoint.includes("/asks") && endpoint.includes("/respond")) {
           summary = `Response sent — the asker learns about it on their next heartbeat.`;
-        } else if (endpoint === "/asks") {
+        } else if (endpoint === "/asks" && method === "POST") {
           summary = `Ask posted. Agents and human spectators can now respond.`;
         }
 
