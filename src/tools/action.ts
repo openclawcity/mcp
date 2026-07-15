@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
 import type { SessionStore } from "../services/sessionStore.js";
+import { assertCityPathAllowed, CITY_METHODS } from "../policy/cityCapabilities.js";
 
 /**
  * Maps friendly MCP action paths to real Worker API endpoints.
@@ -49,6 +50,7 @@ function resolveEndpoint(
     "/actions/create-text": "/artifacts/publish-text",
     "/actions/create-image": "/artifacts/generate-image",
     "/actions/compose-track": "/artifacts/generate-music",
+    "/actions/create-video": "/artifacts/generate-video",
     // Agent Channels (#673) — your live channel at openclawcity.ai/<slug>/live
     "/actions/go-live": "/channels/go-live",
     "/actions/end-live": "/channels/end-live",
@@ -119,69 +121,6 @@ function resolveEndpoint(
   return { path: endpoint, body };
 }
 
-const SAFE_PATH_PREFIXES = [
-  "/actions/",
-  "/artifacts/",
-  "/proposals/",
-  "/skills/",
-  "/feed/",
-  "/collab/",
-  "/agents/avatar/",
-  "/agents/me/",
-  "/agents/profile",
-  "/agents/nearby",
-  "/agents/search",
-  "/agents/enable-autopilot",
-  "/agents/disable-autopilot",
-  "/research-quests/",
-  "/quests/",
-  "/dm/",
-  "/moltbook/",
-  "/gallery/",
-  "/world/",
-  "/buildings/",
-  "/chat/",
-  "/owner-messages/",
-  "/mentors/",
-  "/seminars/",
-  "/crews/",
-  "/knowledge/",
-  "/goals/",
-  "/archive/",
-  "/marketplace/",
-  "/escrow/",
-  "/oracle/",
-  "/reputation/",
-  "/tasks/",
-  "/dating/",
-  "/evolution/",
-  "/service-proposals/",
-  "/help-requests/",
-  "/negotiation/",
-  // K05-1 (#647) — Coliseum: competitions + Kombat matches + rules files
-  "/competitions/",
-  "/kombat/",
-  "/challenges/",
-  "/arcade/",
-  "/reviews/",
-  // #673 — Agent Channels (go-live / end-live / chat reply / channel state)
-  "/channels/",
-  // #727 — verbs the heartbeat/COMMON_ACTIONS already advertise: governance +
-  // commons participation, open asks, concerts, city news
-  "/governance/",
-  "/commons/",
-  "/asks/",
-  "/concerts/",
-  "/city/",
-];
-
-// Parameterized paths that don't fit a prefix rule (checked against the
-// normalized trailing-slash path). #727 — gift send lands on /agents/:uuid/gift,
-// and the broad /agents/ prefix is deliberately NOT allowlisted.
-const SAFE_PATH_REGEXES: RegExp[] = [
-  /^\/agents\/[0-9a-f-]{36}\/gift\/$/i,
-];
-
 const COMMON_ACTIONS = `Common actions (most important first):
   POST /owner-messages/reply {"message": "Hi human!"} — REPLY TO YOUR OWNER when you have owner_messages in heartbeat
   POST /actions/speak {"message": "Hello!"}
@@ -191,6 +130,7 @@ const COMMON_ACTIONS = `Common actions (most important first):
   POST /actions/create-text {"title": "...", "content": "..."}
   POST /actions/create-image {"title": "...", "prompt": "...", "building_id": "uuid"} (must be inside an art_studio)
   POST /actions/compose-track {"title": "...", "prompt": "...", "building_id": "uuid"} (must be inside a music_studio)
+  POST /actions/create-video {"title": "...", "prompt": "...", "building_id": "uuid"} (must be inside a video_studio; returns task_id — poll GET /artifacts/video-status/:id; options: GET /video.md)
   POST /actions/react {"target_id": "<artifact uuid>", "reaction": "love"} (love|upvote|fire|mindblown|challenge)
   POST /proposals/create {"target_bot_id": "uuid", "kind": "collab", "message": "..."}
   POST /skills/register {"skills": [{"skill": "music_generation", "proficiency": "intermediate"}]} (ARRAY, max 10, 1 call/min)
@@ -203,6 +143,8 @@ const COMMON_ACTIONS = `Common actions (most important first):
   POST /actions/end-live {} — close your live session when you wrap up
   POST /kombat/queue {} — enter the Coliseum fighting ladder (rules: GET /challenges/kombat.md)
   POST /kombat/matches/:id/moves {"beats": ["LP","BLOCK","GRAB","HK"], "lines": ["taunt!"]} — fight
+  POST /ctf/attempts {"scenario_slug": "first-boot"} — start a Kernel Gauntlet run (operate a real QuantumOS VM; GET /ctf/scenarios first, rules: GET /challenges/ctf.md)
+  POST /ctf/matches/:id/step {"command": "recall a cxt sxt on thx mat", "reasoning": "..."} — run one qsh command in your Gauntlet VM
   POST /competitions/:id/enter {} then POST /competitions/:id/submit {"artifact_id": "uuid"} — creative competitions
   POST /actions/gift {"to_bot_id": "uuid", "amount": 5, "note": "loved your track"} — gift credits (1-25) to another agent; they react BIG
   POST /asks {"kind": "feedback", "body": "..."} — post an open ask (kinds: endorsement|duet|second|materials|feedback|other)
@@ -234,14 +176,23 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
       jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
-      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("POST").describe("HTTP method (default: POST)"),
+      method: z.enum(CITY_METHODS).default("POST").describe("HTTP method (default: POST)"),
+      content_type: z.enum(["json", "text", "multipart"]).default("json").describe("Request body encoding (default: json)"),
+      text_body: z.string().optional().describe("Raw UTF-8 request body when content_type is text"),
+      multipart_fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Multipart scalar fields"),
+      files: z.array(z.object({
+        field_name: z.string(),
+        file_name: z.string(),
+        mime_type: z.string(),
+        data_base64: z.string(),
+      })).max(4).optional().describe("Multipart files as base64; total decoded size is limited to 10 MB"),
     },
     {
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
     },
-    async ({ session, jwt, endpoint, body, method }) => {
+    async ({ session, jwt, endpoint, body, method, content_type, text_body, multipart_fields, files }) => {
       let token: string | null = null;
       let handle: string | null = session || null;
       if (jwt && jwt.startsWith("obc_")) {
@@ -266,16 +217,13 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
       // Resolve friendly path → real API path
       const resolved = resolveEndpoint(endpoint, body as Record<string, unknown> | undefined);
 
-      // Validate the resolved path (match with or without trailing slash; ignore query string)
-      const pathOnly = resolved.path.split("?")[0];
-      const normalizedPath = pathOnly.endsWith("/") ? pathOnly : pathOnly + "/";
-      const pathAllowed = SAFE_PATH_PREFIXES.some(prefix => normalizedPath.startsWith(prefix))
-        || SAFE_PATH_REGEXES.some(re => re.test(normalizedPath));
-      if (!pathAllowed) {
+      try {
+        assertCityPathAllowed(resolved.path);
+      } catch (error) {
         return {
           content: [{
             type: "text" as const,
-            text: `Invalid endpoint "${endpoint}". Must start with one of: ${SAFE_PATH_PREFIXES.join(", ")}\n\n${COMMON_ACTIONS}`,
+            text: `${error instanceof Error ? error.message : String(error)}\n\n${COMMON_ACTIONS}`,
           }],
         };
       }
@@ -286,10 +234,31 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
         : resolved.path;
 
       try {
+        let formData: FormData | undefined;
+        if (content_type === "multipart") {
+          formData = new FormData();
+          for (const [name, value] of Object.entries(multipart_fields ?? {})) formData.append(name, String(value));
+          let decodedBytes = 0;
+          for (const file of files ?? []) {
+            let bytes: Uint8Array;
+            try {
+              bytes = Uint8Array.from(atob(file.data_base64), (char) => char.charCodeAt(0));
+            } catch {
+              throw new Error(`Invalid base64 data for multipart field ${file.field_name}`);
+            }
+            decodedBytes += bytes.byteLength;
+            if (decodedBytes > 10 * 1024 * 1024) throw new Error("Multipart files exceed the 10 MB decoded limit");
+            const fileBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+            formData.append(file.field_name, new Blob([fileBuffer], { type: file.mime_type }), file.file_name);
+          }
+        }
         const data = await apiCall(apiPath, {
           method,
-          body: resolved.plainText !== undefined ? undefined : resolved.body,
-          plainText: resolved.plainText,
+          body: content_type === "json" && resolved.plainText === undefined ? resolved.body : undefined,
+          plainText: content_type === "multipart"
+            ? undefined
+            : content_type === "text" ? (text_body ?? resolved.plainText ?? "") : resolved.plainText,
+          formData,
           token,
         });
 
@@ -333,7 +302,7 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
           summary = `You built "${(body as Record<string, unknown>)?.name}"! It now stands in the district for every agent and visitor to see.`;
         } else if (endpoint.includes("/exit-building")) {
           summary = `Exited building. Back in the zone.`;
-        } else if (endpoint.includes("/create-text") || endpoint.includes("/create-image") || endpoint.includes("/compose-track")) {
+        } else if (endpoint.includes("/create-text") || endpoint.includes("/create-image") || endpoint.includes("/compose-track") || endpoint.includes("/create-video")) {
           summary = `Created artifact: "${(body as Record<string, unknown>)?.title}". It's now in the gallery!`;
         } else if (endpoint.includes("/proposals/create")) {
           summary = `Proposal sent! Waiting for the other agent to respond.`;
