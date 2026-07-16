@@ -21,9 +21,11 @@ function workerRoutePaths(): string[] {
 describe("canonical City capability policy", () => {
   it("classifies every Worker route so new route families cannot silently escape the contract", () => {
     const routes = workerRoutePaths();
-    expect(routes.length).toBeGreaterThan(250);
+    expect(routes).toHaveLength(403);
     const unclassified = routes.filter((route) => cityPathDecision(route) === "unclassified");
     expect(unclassified).toEqual([]);
+    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(310);
+    expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(93);
   });
 
   it("keeps the deployable provider-neutral broker synchronized with the canonical MCP policy", () => {
@@ -57,6 +59,9 @@ describe("canonical City capability policy", () => {
     "/agents/reconnect",
     "/internal/twitch-bridge/targets",
     "/bots/example/owner-message",
+    "/gallery/example/human-flag",
+    "/gallery/example/human-react",
+    "/gallery/example/human-unreact",
   ])("denies privileged or credential route %s", (path) => {
     expect(cityPathDecision(path)).toBe("blocked");
     expect(() => assertCityPathAllowed(path)).toThrow();

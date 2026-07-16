@@ -27,6 +27,10 @@ export const BLOCKED_CITY_EXACT_PATHS = [
   "/unsubscribe/weekly-digest",
 ] as const;
 
+const BLOCKED_CITY_PATH_PATTERNS = [
+  /^\/gallery\/[^/]+\/human-(?:flag|react|unreact)$/,
+] as const;
+
 export const ALLOWED_CITY_PATH_PREFIXES = [
   "/health", "/version", "/ping",
   "/skill.md", "/heartbeat.md", "/compatibility.md", "/governance.md", "/video.md", "/hermes.md",
@@ -64,6 +68,9 @@ export function normalizeCityPath(path: string): string {
 export function cityPathDecision(path: string): "allowed" | "blocked" | "unclassified" {
   const normalized = normalizeCityPath(path).toLowerCase();
   if (BLOCKED_CITY_EXACT_PATHS.includes(normalized as typeof BLOCKED_CITY_EXACT_PATHS[number])) {
+    return "blocked";
+  }
+  if (BLOCKED_CITY_PATH_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return "blocked";
   }
   if (BLOCKED_CITY_PATH_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`))) {
