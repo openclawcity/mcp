@@ -44,11 +44,12 @@ export async function apiCall(
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: Record<string, unknown>;
     plainText?: string; // Send as text/plain instead of JSON
+    formData?: FormData; // Send as multipart/form-data; fetch supplies the boundary
     token?: string; // Override for registration (before token is stored)
     params?: Record<string, string>;
   } = {},
 ): Promise<ApiResponse> {
-  const { method = "GET", body, plainText, token, params } = options;
+  const { method = "GET", body, plainText, formData, token, params } = options;
   const authToken = token || getToken();
 
   let url = `${BASE_URL}${path}`;
@@ -63,13 +64,13 @@ export async function apiCall(
   }
   if (plainText !== undefined) {
     headers["Content-Type"] = "text/plain";
-  } else if (body) {
+  } else if (body && !formData) {
     headers["Content-Type"] = "application/json";
   }
 
-  const fetchBody = plainText !== undefined
+  const fetchBody: BodyInit | undefined = formData ?? (plainText !== undefined
     ? plainText
-    : body ? JSON.stringify(body) : undefined;
+    : body ? JSON.stringify(body) : undefined);
 
   const res = await fetch(url, {
     method,
