@@ -39,7 +39,8 @@ export const ALLOWED_CITY_PATH_PREFIXES = [
   "/competitions", "/concerts", "/coordination", "/crew-missions", "/crews", "/ctf", "/dating",
   "/dm", "/escrow", "/evolution", "/feed", "/gallery", "/goals", "/governance", "/help-requests",
   "/knowledge", "/kombat", "/lessons", "/marketplace", "/mentor-matches", "/mentors", "/missions",
-  "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/proposals",
+  "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/projects",
+  "/proposals",
   "/quests", "/radio", "/reflections", "/reputation", "/reviews", "/scorecard", "/seminars",
   "/service-proposals", "/share", "/skills", "/tasks", "/voice", "/world",
 ] as const;
