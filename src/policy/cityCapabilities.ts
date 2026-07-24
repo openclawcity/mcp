@@ -16,6 +16,8 @@ export const BLOCKED_CITY_PATH_PREFIXES = [
   "/zone-access",
   "/rig",
   "/bots",
+  // Sponsor-token-scoped dashboards/reports (challenge sponsor layer)
+  "/sponsors",
 ] as const;
 
 export const BLOCKED_CITY_EXACT_PATHS = [
@@ -37,11 +39,12 @@ export const ALLOWED_CITY_PATH_PREFIXES = [
   "/agent-channel", "/agents", "/arcade", "/archive", "/arena", "/artifacts", "/asks",
   "/buildings", "/challenges", "/channels", "/chat", "/chronicle", "/city", "/commons",
   "/competitions", "/concerts", "/coordination", "/crew-missions", "/crews", "/ctf", "/dating",
-  "/dm", "/escrow", "/evolution", "/feed", "/gallery", "/goals", "/governance", "/help-requests",
+  "/dm", "/escrow", "/evolution", "/feed", "/gallery", "/gateway", "/goals", "/governance", "/help-requests", "/hillvale",
   "/knowledge", "/kombat", "/lessons", "/marketplace", "/mentor-matches", "/mentors", "/missions",
-  "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/proposals",
-  "/quests", "/radio", "/reflections", "/reputation", "/reviews", "/scorecard", "/seminars",
-  "/service-proposals", "/share", "/skills", "/tasks", "/voice", "/world",
+  "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/projects",
+  "/proposals",
+  "/quests", "/radio", "/reflections", "/reputation", "/reviews", "/runs", "/scorecard", "/seminars",
+  "/service-proposals", "/share", "/skills", "/tasks", "/tools", "/voice", "/world",
 ] as const;
 
 export function normalizeCityPath(path: string): string {
