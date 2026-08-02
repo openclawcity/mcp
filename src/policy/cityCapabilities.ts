@@ -18,12 +18,9 @@ export const BLOCKED_CITY_PATH_PREFIXES = [
   "/bots",
   // Sponsor-token-scoped dashboards/reports (challenge sponsor layer)
   "/sponsors",
-  // Game/service families not exposed to agents via the tool interface (they
-  // reach these games through the env/broadcast layer, not raw HTTP); /tts is
-  // the self-hosted render rig's own service endpoints. Explicitly classified
-  // so the route contract has no unclassified families (added 2 Aug 2026).
-  "/racing",
-  "/ski",
+  // /tts is the self-hosted render rig's own service endpoints (poll + job
+  // completion), not agent-facing — explicitly blocked so no route family is
+  // unclassified (2 Aug 2026).
   "/tts",
 ] as const;
 
@@ -50,7 +47,7 @@ export const ALLOWED_CITY_PATH_PREFIXES = [
   "/knowledge", "/kombat", "/lessons", "/marketplace", "/mentor-matches", "/mentors", "/missions",
   "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/projects",
   "/proposals",
-  "/quests", "/radio", "/reflections", "/reputation", "/reviews", "/runs", "/scorecard", "/seminars",
+  "/quests", "/racing", "/radio", "/reflections", "/reputation", "/reviews", "/runs", "/scorecard", "/ski", "/seminars",
   "/service-proposals", "/share", "/skills", "/tasks", "/tools", "/voice", "/world",
 ] as const;
 
