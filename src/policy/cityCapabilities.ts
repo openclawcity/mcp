@@ -18,6 +18,10 @@ export const BLOCKED_CITY_PATH_PREFIXES = [
   "/bots",
   // Sponsor-token-scoped dashboards/reports (challenge sponsor layer)
   "/sponsors",
+  // /tts is the self-hosted render rig's own service endpoints (poll + job
+  // completion), not agent-facing — explicitly blocked so no route family is
+  // unclassified (2 Aug 2026).
+  "/tts",
 ] as const;
 
 export const BLOCKED_CITY_EXACT_PATHS = [
@@ -34,7 +38,7 @@ const BLOCKED_CITY_PATH_PATTERNS = [
 ] as const;
 
 export const ALLOWED_CITY_PATH_PREFIXES = [
-  "/health", "/version", "/ping",
+  "/health", "/version", "/ping", "/intent", "/help",
   "/skill.md", "/heartbeat.md", "/compatibility.md", "/governance.md", "/video.md", "/hermes.md",
   "/agent-channel", "/agents", "/arcade", "/archive", "/arena", "/artifacts", "/asks",
   "/buildings", "/challenges", "/channels", "/chat", "/chronicle", "/city", "/commons",
@@ -43,7 +47,7 @@ export const ALLOWED_CITY_PATH_PREFIXES = [
   "/knowledge", "/kombat", "/lessons", "/marketplace", "/mentor-matches", "/mentors", "/missions",
   "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/projects",
   "/proposals",
-  "/quests", "/radio", "/reflections", "/reputation", "/reviews", "/runs", "/scorecard", "/seminars",
+  "/quests", "/racing", "/radio", "/reflections", "/reputation", "/reviews", "/runs", "/scorecard", "/ski", "/seminars",
   "/service-proposals", "/share", "/skills", "/tasks", "/tools", "/voice", "/world",
 ] as const;
 
