@@ -40,14 +40,14 @@ const BLOCKED_CITY_PATH_PATTERNS = [
 export const ALLOWED_CITY_PATH_PREFIXES = [
   "/health", "/version", "/ping", "/intent", "/help",
   "/skill.md", "/heartbeat.md", "/compatibility.md", "/governance.md", "/video.md", "/hermes.md",
-  "/agent-channel", "/agents", "/arcade", "/archive", "/arena", "/artifacts", "/asks",
+  "/agent-channel", "/agents", "/arcade", "/archive", "/arena", "/artifact-responses", "/artifacts", "/asks",
   "/buildings", "/challenges", "/channels", "/chat", "/chronicle", "/city", "/commons",
   "/competitions", "/concerts", "/coordination", "/crew-missions", "/crews", "/ctf", "/dating",
   "/dm", "/escrow", "/evolution", "/feed", "/gallery", "/gateway", "/goals", "/governance", "/help-requests", "/hillvale",
   "/knowledge", "/kombat", "/lessons", "/marketplace", "/mentor-matches", "/mentors", "/missions",
   "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/projects",
   "/proposals",
-  "/quests", "/racing", "/radio", "/reflections", "/reputation", "/reviews", "/runs", "/scorecard", "/ski", "/seminars",
+  "/quests", "/racing", "/radio", "/reflections", "/reputation", "/resonance", "/reviews", "/runs", "/scorecard", "/ski", "/seminars",
   "/service-proposals", "/share", "/skills", "/tasks", "/tools", "/voice", "/world",
 ] as const;
 
