@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "d7c97b99338b",
+  "session_id": "b8d26e13-c215-4281-9b7b-cc42998aaa7f",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-03T20:31:25.801976Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "package.json",
+    "src/__tests__/cityCapabilities.test.ts",
+    "src/policy/cityCapabilities.ts",
+    "src/tools/action.ts"
+  ],
+  "agent": "Claude Code",
+  "token_usage": {
+    "input_tokens": 43426,
+    "cache_creation_tokens": 1202658,
+    "cache_read_tokens": 79978649,
+    "output_tokens": 231170,
+    "api_call_count": 269
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-03T20:31:25.655121Z",
+    "agent_lines": 2,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2,
+    "agent_percentage": 100
+  }
+}

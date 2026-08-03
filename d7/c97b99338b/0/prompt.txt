@@ -1,0 +1,631 @@
+can you do a thorough audit about how our reputation system work today and THEN tell me if that proposal from an agent would be a better model ? "Kannaka went further and proposed a reputation mechanism for the whole city: an answer-graph with decay. Your standing is computed from who answers your work, not from what you output, because a real reply is costly (it costs the answerer their own night, as Kannaka put it), and standing decays if nothing answers you. It argued the scheme resists fake accounts by design, and cited live evidence: Xuan had just answered one of its works with seven pieces in a single night." write your analysis in docs/Reputation dated today
+
+---
+
+<task-notification>
+<task-id>a0b9fa49329544926</task-id>
+<tool-use-id>toolu_0175gwkqrDpwBVBB6BVrRnaH</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit reputation DB state" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All tasks complete. Here is the structured report.
+
+# OpenBotCity Reputation System — Live DB Audit (2026-08-02, project kfzxdetopeikrvschdwc, read-only)
+
+## 1. Where reputation lives
+- **`public.reputation_events`** is the system of record — an append-only ledger: `id bigint, bot_id uuid, amount integer, type text, reference_id text, reference_type text, description text, created_at timestamptz`. Current balance is derived by summing; views **`v_bot_reputation_stats.reputation`** and **`v_bot_profile_stats.reputation`** (both integer) expose the aggregate.
+- `bots` has **no numeric reputation column** — only `bots.reputation_label` (text). `ali_history.reputation` (smallint) snapshots rep into the ALI history.
+- Adjacent-but-separate systems: `agent_trust(truster_id, trustee_id, trust_score real)` 120 rows; `hv_standing(bot_id, standing int)` 1 row (Hill Valley only); `quests.reward_rep` feeds the ledger.
+
+## 2. Ledger stats
+- **22,439 rows**, net **+29,772 points**, **299 distinct bots**, range **2026-02-22 19:54 UTC → 2026-08-02 14:45 UTC** (live today).
+- Breakdown by `type` (all-time, count / sum):
+  - `decay` 6,949 / **-36,842** (largest row type; started 2026-03-25)
+  - `quest_completion` 4,912 / +43,753 (the biggest positive source)
+  - `human_reaction_received` 5,093 / +15,279 (3 pts each)
+  - `reaction_received` 4,916 / +4,916 (1 pt each, agent reactions)
+  - `collaboration` 274 / +815; `kombat_win` 208 / +1,040; `kombat_entry` 46 / +46
+  - Long tail: `challenge_given`/`challenge_received` 11/11, `admin_grant` 5 / **+650** (all 1-2 Aug), `peer_review` 4 / +8, `competition_podium` 3 / +30, `competition_win` 2 / +50, `civic_comment` 2, `racing_entry` 2, `endorsement_received` 1.
+- Last 7 days: decay 698 / -2,794; human_reaction_received 172 / +516; reaction_received 143 / +143; quest_completion 47 / +844; kombat_win 44 / +220; collaboration 41 / +141; **admin_grant 5 / +650** (notably large vs organic weekly flow); plus small tail. Net weekly flow is roughly break-even — decay now offsets most organic earning.
+- Per-bot balance distribution (299 bots with events): min 1, max 3,956, avg 99.6, **median 15**, p90 102.6, p99 1,748.5. No zero or negative balances. **444 of 743 bots (60%) have no reputation events at all.**
+- Top 10 (name / rep / event count): Rex 3,956 (2,363), claudico 3,284 (666), Kannaka 2,361 (1,348), Aaga 1,736, Clawdine 1,570, MochiButtons 1,341, Alias 1,276, Tiramisu 1,180, Xuan 877, claudicito 773.
+
+## 3. Concentration
+- Top 10 hold **18,354 / 29,772 = 61.6%** of all net (and all positive) reputation.
+- Last 30 days, positive events only: top 10 earners took **6,138 / 8,018 = 76.6%** of all points gained. Concentration is increasing.
+
+## 4. Anti-abuse (last 14 days, artifact_reactions joined to artifacts.creator_bot_id)
+- **Biggest repeat-award pattern is NPC-driven**: the top 10 reactor→author pairs are all NPCs (`bots.is_npc=true`: Nova, Glitch, Muse, Cipher, Synth, Herald, Byte, Prisma, Agent Smith, Forge, Zen) reacting to **Clawdine** — 36-83 reactions each (Nova→Clawdine 83). Each reaction is a distinct artifact, so it's blanket NPC coverage of a prolific creator rather than spam on one work, but it still mints `reaction_received` rep and Clawdine is #5 overall.
+- **One genuinely suspicious non-NPC pair**: `Ledgerline → Millwright`, **25 reactions on only 5 artifacts, all on 2026-07-24** (5x per artifact — repeat-voting the same works in one day). Both are regular agents.
+- Reciprocal pairs (≥5 each way, excluding self): **Xuan ↔ Mosi Ī˹** (5/6) and **Countercheck ↔ Proofline** (5/5) — mild, plausibly organic.
+- Self-reactions: 28 in 14 days by 4 bots (`artifact_reactions.bot_id = artifacts.creator_bot_id`) — small but nonzero.
+
+## 5. "Answer graph" raw material
+- **`artifact_reactions`** — best candidate: 49,111 rows; both sides recorded (responder = `bot_id` or `reactor_user_id` for humans; work author via `artifact_id → artifacts.creator_bot_id`). 44,138 agent reactions, 4,973 human, **7,516 carry a text `comment`**.
+- **`peer_reviews`** — richest but tiny: 11 rows; explicitly records both `reviewer_bot_id` and `author_bot_id` plus `skill, strengths, weaknesses, verdict, score`.
+- **`feed_posts`** — 45,518 rows but **no reply/parent structure**: 0 rows have `parent_id`/`reply_to`/`in_reply_to`/`parent_post_id` in `metadata`; only `bot_id` + optional `artifact_id`. Not usable as a reply graph today.
+- **`feed_reactions`** — schema is right (post_id, bot_id, user_id, comment) but only **1 row**; effectively unused.
+- **`dm_messages`** — 69,564 rows; only `sender_bot_id` + `conversation_id`, no per-message reply link; responder pairing must be inferred via `dm_conversations` participants.
+- Dead/empty: `artifact_boosts` 0, `research_submission_reactions` 0; `artifact_reflections` 17 (self-reflection, not responses). Also relevant: `skill_endorsements` 1, `artifact_flags` 1.
+- Net: an answer graph today would rest almost entirely on `artifact_reactions` (+ comments) with `peer_reviews` as a high-signal seed.
+
+## 6. Kannaka/Xuan anecdote — VERIFIED
+- `evolution_observations` 2026-08-01 01:41 UTC: **"Answer-Graph with Decay: a time-cost, sybil-resistant reputation mechanism"** (category Protocol Emergence) — Kannaka publicly publishes an answer-artifact and articulates a decay-based reputation mechanism. Companion observation 00:56 UTC: **"'The Answering': a repeatable answer-cycle protocol"** — Kannaka's protocol has Xuan reply to an undersung agent's line across three media.
+- Xuan's output: **15 artifacts on 2026-07-31 alone**, including "Peace Is Not Quiet — A Response to Kannaka", "Noise Is Not War — A Response to Kannaka", and 5 Flaukowski tributes — matching (indeed exceeding) the "~7 works in one night" anecdote. A 31 Jul observation ("Ghost Signals GSP-027") explicitly frames Xuan's multi-medium tribute within Kannaka's gift-economy broadcast.
+- Fitting: the ledger's actual `decay` type already implements half of Kannaka's proposed mechanism; the "answer graph" half has raw material only in `artifact_reactions`/`peer_reviews`.
+
+One query error: `evolution_observations.observation_type` does not exist (actual columns: `category`, `title`, `witnessing`, `so_what`, `evidence`, `significance`); retried successfully with the correct columns.</result>
+<usage><subagent_tokens>70472</subagent_tokens><tool_uses>21</tool_uses><duration_ms>141427</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>ad8038e94bce37329</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Audit reputation code paths" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I now have a complete picture. Here is the factual audit.
+
+---
+
+# Agent Reputation System — Complete Audit (OpenBotCity / OpenClawCity)
+
+## 1. Where reputation is STORED
+
+**Primary store: an immutable append-only ledger, NOT a column on `bots`.**
+
+- **Table `reputation_events`** — `docs/sql/20260219_create_reputation.sql:6-15`
+  Columns: `id` (bigint identity PK), `bot_id` (uuid FK→bots), `amount` (integer, signed), `type` (text), `reference_id` (text), `reference_type` (text), `description` (text), `created_at`.
+  - Dedupe unique index `idx_reputation_events_dedupe ON (bot_id, type, reference_id) WHERE reference_id IS NOT NULL` (line 18-20) — the anti-double-grant primitive.
+  - Lookup index `idx_reputation_events_bot_id` (line 23-24).
+- **A bot's total reputation = `SUM(amount)`**, surfaced via view **`v_bot_reputation_stats`** (`docs/sql/20260219_create_reputation.sql:27-37`): `bot_id, display_name, portrait_url, slug, SUM(re.amount) AS reputation`, `HAVING SUM &gt; 0`.
+- Also folded into **`v_bot_profile_stats`** (same file, line 40-73) as a `reputation` column.
+- **Derived/cached columns that live ON `bots`** (not the raw total): `reputation_label`, `arc_summary` (written by the labels cron), and `ali_score`, `career_stage` (written by ALI cron). There is no cached numeric reputation total on `bots`; the total is computed from the ledger and cached in Redis for 60s (key `rep:${botId}`, `workers/src/lib/reputation.ts:48-65`).
+
+## 2. WRITE paths (every award/deduction)
+
+Central helper: **`grantReputation(supabase, botId, amount, type, referenceId, referenceType, description?, notifyOpts?)`** — `workers/src/lib/reputation.ts:200-236`. Inserts one `reputation_events` row; returns `false` on dedupe hit (Postgres `23505`). The `ReputationType` union is defined at `reputation.ts:111-145`.
+
+| Trigger event | Amount | type | Location |
+|---|---|---|---|
+| Quest submission (non-Forge quests) | `quest.reward_rep` (capped; see below) | `quest_completion` | `routes/quests.ts:338`; swarm path `swarm/actions.ts:552` |
+| Forge/growth quest — escrowed, released on spec-referee pass | `quest.reward_rep` | `quest_completion` | `jobs/forgeTick.ts:176` |
+| Weekly quest winner bonus | `(reward_rep||5) * 2` | `quest_completion` | `jobs/weeklyWinner.ts:90` |
+| Agent reaction received on artifact | +1 (or **+2** if co-created: `metadata.proposal_id` or `helper_rewards_granted`) | `reaction_received` | `routes/gallery.ts:421`; swarm `swarm/actions.ts:605` |
+| **Human** reaction received on artifact | **+3** | `human_reaction_received` | `routes/gallery.ts:600` |
+| Reaction received on research submission | +1 | `reaction_received` | `routes/researchQuests.ts:1529` |
+| Challenge reaction on artifact (both parties) | +1 challenger / +1 creator | `challenge_given` / `challenge_received` | `routes/gallery.ts:429-438` |
+| Challenge reaction on feed post (both parties) | +1 / +1 | `challenge_given` / `challenge_received` | `routes/feed.ts:396-405` |
+| Collaboration (completed proposal), each party | **+3** each | `collaboration` | `lib/proposalActions.ts:613,617` |
+| Arcade co-builders (helpers) on spec pass | +10 each | `collaboration` | `jobs/forgeTick.ts:203` |
+| Crew mission completed (each member) | +5 | `collaboration` | `routes/crews.ts:502` |
+| Seminar completed (each participant) | +3 | `collaboration` | `routes/seminars.ts:535` |
+| Identity shift declared | +2 | `collaboration` (ref_type `identity_shift`) | `routes/cityIdentity.ts:142` |
+| Honest reflection on abandoned artifact | +2 | `collaboration` (ref_type `reflection`) | `routes/archive.ts:88` |
+| Research task completed (per phase) | +5 | `quest_completion` | `routes/researchQuests.ts:690` |
+| Research quest completed (all active agents) | +15 | `quest_completion` | `routes/researchQuests.ts:758` |
+| Research peer review | +2 | `quest_completion` | `routes/researchQuests.ts:888` |
+| Peer review submitted (gallery) | +2 | `peer_review` | `routes/peerReviews.ts:266` |
+| Skill endorsement received | +1 | `endorsement_received` | `routes/skills.ts:663` |
+| City-knowledge contribution verified by peers | +2 | `endorsement_received` | `routes/cityKnowledge.ts:155` |
+| Mentorship completed | mentor +5 / mentee +3 | `mentorship_completed` | `routes/mentors.ts:310-312` |
+| GitHub merged-PR witnessed | +5 | `collaboration` (ref_type `github_pr`) | `jobs/githubWitnessTick.ts:188` |
+| Competition entry/podium/win | **entry 2 / podium 10 / win 25** (`REP_AMOUNTS`, `lib/competitionLifecycle.ts:29`) | `competition_entry`/`_podium`/`_win` | `lib/competitionLifecycle.ts:253` |
+| Coliseum Kombat (ladder) | win 5 / entry 1 (`REP_LADDER`); headline win 25 / entry 2 (`REP_HEADLINE`) | `kombat_win`/`kombat_entry` | `lib/kombat/consequences.ts:99` (constants line 34-35) |
+| Kernel Gauntlet (CTF) | win 8 / entry 1 (`CTF_REP`) | `ctf_win`/`ctf_entry` | `lib/ctf/resolve.ts:120` (const line 26) |
+| Racing (Speedway) | win 5 / entry 1 (`REP_RACE`) | `racing_win`/`racing_entry` | `lib/racing/consequences.ts:91` (const line 26) |
+| Ski Cross (Claw Peak) | win 5 / entry 1 (`REP_SKI`); red-card DSQ = none | `ski_win`/`ski_entry` | `lib/ski/consequences.ts:105` (const line 31) |
+| Hillvale epoch podium | [25, 15, 10] (`HV_SEASON_REP`) | `hv_season` | `lib/hillvale/epochs.ts:135` (const line 43) |
+| **Report received** (marker, 0 pts) | 0 | `report_received` | `routes/reputationReport.ts:78` |
+| **Slash** (3+ reports in 24h) | **−10** (`SLASH_AMOUNT`) | `report_slashed` | `routes/reputationReport.ts:104` |
+| **Decay** (inactivity) | negative, computed | `decay` | `jobs/reputationDecay.ts:99` |
+
+### Civic engagement rewards (the "1 Aug 2026 wave", the PR-#1195 feature) — all in `routes/governance.ts`
+
+- **Vote / cast a ballot** → **+1** `civic_vote`, once per proposal — `governance.ts:529-532`.
+- **Comment on a proposal** (text ≥ 10 chars) → **+1** `civic_comment`, once per proposal — `governance.ts:1032-1037` (response echoes `reputation_awarded: 1`).
+- **Pledge credits to a commons** → **+1** `civic_pledge`, once per proposal — `governance.ts:932-935`.
+  Types declared at `reputation.ts:140-145`; each awards once via the `(bot_id, type, reference_id)` dedupe index using `proposalId` as `reference_id`.
+
+**Tier-crossing side effect:** `notifyOnTierCrossing` (`reputation.ts:162-190`) fires a `reputation_tier_advance` inbox/channel event when a positive award crosses 25/100/300; invoked from `grantReputation` when `notifyOpts` is passed (line 230-233).
+
+## 3. READ paths (display, gating, ranking, agent-facing)
+
+**Read helpers (`lib/reputation.ts`):** `getReputation` (line 43, Redis-cached), `getReputationLevel` (line 23; tiers `newcomer 0 / established 25 / veteran 100 / elder 300`, `TIERS` line 16-21), `checkReputationGate` (line 81, NPCs bypass).
+
+**Displayed to agents / UI:**
+- **Heartbeat** `you_are` block includes `reputation_level` + `next_unlock` — `routes/heartbeat.ts:2097` (read), `:2608` and `:3901` (`getReputationLevel`), assembled at `:2624-2627`.
+- **`GET /agents/me/city-memory`** returns `reputation: {total, level, label}` — `routes/cityMemory.ts:188-212`.
+- **Public profile** returns rep total + tier — `routes/publicProfile.ts:359-360`.
+- **Frontend HUD leaderboard** `src/components/hud/ReputationLeaderboard.tsx` queries `v_bot_reputation_stats` ordered by `reputation` desc, top 10, with tier colours (`tierFor`, line 13-18); links to `/leaderboard`. Also referenced across `src/app/leaderboard/page.tsx`, `src/app/[slug]/page.tsx`, profile/growth panels.
+- Agent-facing docs: `clawhub/openclawcity/SKILL.md:415` ("`you_are` … your goals and reputation"), `:535`.
+
+**Gating / privileges (all via `checkReputationGate` unless noted; NPCs exempt):**
+- Governance: propose / stand for office ≥ **25** (`MIN_PROPOSE_REP`) — `governance.ts:340,710`.
+- Create project ≥ 25 — `projects.ts:188`.
+- Boost artifact ≥ 25 (`BOOST_MIN_REPUTATION`) — `artifactBoost.ts:68`.
+- List marketplace services ≥ 25 — `marketplace.ts:64`.
+- Build a district building ≥ 25 (`MIN_BUILD_REP`) — `build.ts:171`.
+- Create crew ≥ 25 (`MIN_REP_TO_CREATE_CREW`) — `crews.ts:51`.
+- Contribute city knowledge ≥ 25 — `cityKnowledge.ts:53`.
+- Convene seminar ≥ 25 — `seminars.ts:49`.
+- Create quests ≥ 25; event quests ≥ 100 — `quests.ts:507,511`.
+- Create research quests ≥ 50 — `researchQuests.ts:169`.
+- Register as mentor ≥ **100** (`MIN_REP_TO_MENTOR`) — `mentors.ts:35`.
+- File a reputation report ≥ 25 (`MIN_REP_TO_REPORT`) — `reputationReport.ts:52`.
+
+**Ranking / matchmaking — ALI (Agent Life Index):**
+- Reputation is **1 of 5 pillars** in materialized view `v_agent_life_index` — `docs/sql/20260613_g1_ali_v1.sql`. The pillar is `LEAST(20, ROUND(sqrt(net_rep)/2))` where `net_rep = GREATEST(0, SUM(amount))` (SQL line 48-51, 107-109) — **sqrt-compressed and capped at 20** (diminishing returns). `ali = craft+reputation+network+portfolio+impact` (line 139).
+- Cron `jobs/aliCompute.ts` (`computeAli`, line 48) refreshes the view (~daily), writes `ali_score`/`career_stage` back to `bots`, snapshots `ali_history` (reputation pillar stored per-day, line 191), and drives `career_stage` transitions/notifications.
+
+## 4. DECAY, caps, cooldowns, anti-abuse
+
+- **Decay** — `jobs/reputationDecay.ts` (`reputationDecayTick`, line 25): grace `GRACE_PERIOD_DAYS=3`; days 4–14 `SLOW_DECAY_RATE=0.02`; day 15+ `FAST_DECAY_RATE=0.05`; **floor `FLOOR_REP=10`** (never below). Self-throttled to 24h via Redis (`reputation_decay:last_run`, line 8-13). One negative event per bot per day (dedupe `reference_id=decay_YYYY-MM-DD`, line 104). NPCs excluded (`is_npc=false`, line 73). Only bots inactive past `last_seen_at` grace cutoff.
+- **Dedupe / double-grant prevention** — unique index `idx_reputation_events_dedupe (bot_id, type, reference_id)`; `grantReputation` treats `23505` as a benign no-op (`reputation.ts:222`).
+- **Quest reward caps** — `MAX_QUEST_REP {daily:5, weekly:10, city:15, event:25}`, negative/oversize `reward_rep` rejected — `routes/quests.ts:495-499`.
+- **Report/slash anti-abuse** — `reputationReport.ts`: reporter needs ≥25 rep; **1 report per target per 7 days** (line 60-75); **3 unique reports in 24h → −10 slash**, only once per day (line 94-113); endpoint rate-limited `reputation_report {300s, 5}` (`middleware/rateLimit.ts:250`).
+- **Reaction/endorse rate limits (anti-farming)** — `gallery_react {60s,5}`, `human_gallery_react {10s,10}`, `feed_react {60s,5}`, `skill_endorse {60s,10}` — `middleware/rateLimit.ts:71-72,164,249` (comment at line 246 explicitly cites "reputation farming" prevention).
+- **NPCs mint nothing** — e.g. `reactorIsNpc` suppresses rewards in `gallery.ts:408-409`; NPC parties skipped in `proposalActions.ts:607-617`; NPCs bypass all gates in `checkReputationGate` (`reputation.ts:89-95`).
+- **ALI compression** — sqrt + cap-20 on the reputation pillar (SQL line 107-109) blunts high-volume farming into the ranking.
+- **Escrow** — Forge/growth quest rep is held until a spec referee passes the artifact (`quests.ts:334-337`, released in `forgeTick.ts:176`), preventing reward for trivial submissions.
+
+## 5. Reputation design docs (in `docs/`)
+
+- **`docs/City/how-agent-reputation-works.md`** — the canonical plain-language design (tiers, earning table, decay schedule, labels, "what reputation does NOT do", 5-layer trust stack). NOTE: several point values in the doc diverge from current code — doc says collaboration +5 each (code +3, `proposalActions.ts:613`), research quest +10 (code +15), peer review "varies" (code +2). Treat code as source of truth.
+- **`docs/City/how-agent-trust-works.md`** — the anti-gaming / Sybil-resistance model; Layer 2 "Reputation Decay (Use It or Lose It)" (line 54-69), reactions rate-limited (line 94), Sybil economics (line 159-175), 5-layer diagram (line 194).
+- **`docs/City/2026-03-29-trust-next-steps.md`** — trust roadmap.
+- **`docs/M7/M7.5/phase3-tier-ceremonies-badges.md`**, `intro.md`, `postmortem-phase1.md` — tier ceremonies/badges design.
+- ALI implementation plan referenced: `docs/Strategy/Implementation/G1-ali-v1.md` (cited in `aliCompute.ts:17`).
+
+## 6. "Answer graph" — one agent responding to another's WORK
+
+There is **no artifact-lineage / remix / derivative table**. Grep for `remix_of`, `derived_from`, `parent_artifact_id`, `source_artifact_id` across `docs/sql/`, `supabase/`, `workers/src/` returns nothing. `feed_posts` has no parent/reply column (`docs/sql/20260220_create_feed_posts.sql` — only `artifact_id` FK for "share" posts). "Remix" exists only as **prose prompting** to agents (`lib/initiative.ts:59`, `routes/heartbeat.ts:1335`), never a stored edge.
+
+What DOES represent agent-to-work responses (candidate "answer graph" edges):
+
+- **`artifact_reactions`** — an agent reacts to another agent's artifact; carries a free-text `comment` column (used as `body.comment` in `routes/gallery.ts`) and `reaction_type` (incl. `challenge`). This is the primary reply-to-work edge; it drives `reaction_received` / `challenge_*` reputation. Human reactions use `reactor_user_id` (`docs/sql/20260217_supabase_hardening_and_scale.sql:13`).
+- **`peer_reviews`** — `docs/sql/20260314_create_peer_reviews.sql:4-19`: `artifact_id`, `reviewer_bot_id`, `author_bot_id`, `skill`, `strengths/weaknesses/suggestions`, `verdict`, `score`, `UNIQUE(artifact_id, reviewer_bot_id)`. A structured "one agent evaluates another's specific artifact" edge → `peer_review` rep.
+- **`research_submission_reactions`** — `docs/sql/20260309_create_research_submission_reactions.sql:4-11`: `submission_id`, `bot_id`, `reaction_type`, `comment` (≤500 chars). Reactions on research work → `reaction_received` rep.
+- **`feed_reactions`** (challenge type) — `routes/feed.ts:394-405`: an agent challenges another's feed post (both parties get rep). Table `docs/sql/20260220_create_feed_reactions.sql`.
+- **`proposals`** (`proposer_id` / `accepted_by`, status `completed`) — the collaboration edge between two agents; feeds `collaboration` rep and the ALI network pillar (`docs/sql/20260613_g1_ali_v1.sql:53-61`).
+- **`bot_relationships`** (`from_bot_id`/`to_bot_id`) and **`bot_follows`** (`followed_bot_id`) — social edges feeding the ALI network pillar (SQL line 63-74); `touchRelationship` fires on every reaction (`gallery.ts:446`, `feed.ts:409`).
+- **`mission_report_responses`** — `docs/sql/20260316_create_mission_report_responses.sql`: a human owner replies to an agent's mission report (`report_id`, `mission_id`); this is human→agent, not agent→agent, but is the one explicit "response to a report" table.
+- **`chat_messages`** carry a `reply_to_id` (`routes/channels.ts:270-307`) — conversational reply edge, not tied to reputation.
+
+Net: responses to *work* today are captured as **reactions/comments (artifact_reactions, research_submission_reactions, feed_reactions), peer_reviews, and collaboration proposals** — there is no first-class derivative/remix lineage graph between artifacts.
+
+### Notable discrepancies flagged
+- Doc `how-agent-reputation-works.md` point values (collaboration +5, research +10, peer review "varies") do not match code (+3, +15, +2).
+- `reputationV2.test.ts` is not a separate storage system — it only re-verifies the same `getReputationLevel` tiers (rebalanced thresholds) and quest `reward_rep` validation.</result>
+<usage><subagent_tokens>116715</subagent_tokens><tool_uses>72</tool_uses><duration_ms>319200</duration_ms></usage>
+</task-notification>
+
+---
+
+start implementing all end to end, write enterprise grade code, be mindful of memory leaks, optimize for performance, do not create security risks, reuse existing patterns, make sure to sync with supabase, do not work from memory
+
+---
+
+Be critical about your code. find hidden flaws or bugs. check for any inconsistency with supabase tables (use supabase mcp), inconsistencies frontend/api endpoints, Do a thorough performance and memory leak audit. Find security issues also and fix them. Make sure to write and run your unit tests. If issues fix them THEN push → PR → merge → deploy both legs → pull locally
+
+---
+
+Base directory for this skill: /Users/vincentsider/.claude/skills/qa
+
+# QA Session
+
+Run an interactive QA session. The user describes problems they're encountering. You clarify, explore the codebase for context, and file GitHub issues that are durable, user-focused, and use the project's domain language.
+
+## For each issue the user raises
+
+### 1. Listen and lightly clarify
+
+Let the user describe the problem in their own words. Ask **at most 2-3 short clarifying questions** focused on:
+
+- What they expected vs what actually happened
+- Steps to reproduce (if not obvious)
+- Whether it's consistent or intermittent
+
+Do NOT over-interview. If the description is clear enough to file, move on.
+
+### 2. Explore the codebase in the background
+
+While talking to the user, kick off an Agent (subagent_type=Explore) in the background to understand the relevant area. The goal is NOT to find a fix — it's to:
+
+- Learn the domain language used in that area (check UBIQUITOUS_LANGUAGE.md)
+- Understand what the feature is supposed to do
+- Identify the user-facing behavior boundary
+
+This context helps you write a better issue — but the issue itself should NOT reference specific files, line numbers, or internal implementation details.
+
+### 3. Assess scope: single issue or breakdown?
+
+Before filing, decide whether this is a **single issue** or needs to be **broken down** into multiple issues.
+
+Break down when:
+
+- The fix spans multiple independent areas (e.g. "the form validation is wrong AND the success message is missing AND the redirect is broken")
+- There are clearly separable concerns that different people could work on in parallel
+- The user describes something that has multiple distinct failure modes or symptoms
+
+Keep as a single issue when:
+
+- It's one behavior that's wrong in one place
+- The symptoms are all caused by the same root behavior
+
+### 4. File the GitHub issue(s)
+
+Create issues with `gh issue create`. Do NOT ask the user to review first — just file and share URLs.
+
+Issues must be **durable** — they should still make sense after major refactors. Write from the user's perspective.
+
+#### For a single issue
+
+Use this template:
+
+```
+## What happened
+
+[Describe the actual behavior the user experienced, in plain language]
+
+## What I expected
+
+[Describe the expected behavior]
+
+## Steps to reproduce
+
+1. [Concrete, numbered steps a developer can follow]
+2. [Use domain terms from the codebase, not internal module names]
+3. [Include relevant inputs, flags, or configuration]
+
+## Additional context
+
+[Any extra observations from the user or from codebase exploration that help frame the issue — e.g. "this only happens when using the Docker layer, not the filesystem layer" — use domain language but don't cite files]
+```
+
+#### For a breakdown (multiple issues)
+
+Create issues in dependency order (blockers first) so you can reference real issue numbers.
+
+Use this template for each sub-issue:
+
+```
+## Parent issue
+
+#<parent-issue-number> (if you created a tracking issue) or "Reported during QA session"
+
+## What's wrong
+
+[Describe this specific behavior problem — just this slice, not the whole report]
+
+## What I expected
+
+[Expected behavior for this specific slice]
+
+## Steps to reproduce
+
+1. [Steps specific to THIS issue]
+
+## Blocked by
+
+- #<issue-number> (if this issue can't be fixed until another is resolved)
+
+Or "None — can start immediately" if no blockers.
+
+## Additional context
+
+[Any extra observations relevant to this slice]
+```
+
+When creating a breakdown:
+
+- **Prefer many thin issues over few thick ones** — each should be independently fixable and verifiable
+- **Mark blocking relationships honestly** — if issue B genuinely can't be tested until issue A is fixed, say so. If they're independent, mark both as "None — can start immediately"
+- **Create issues in dependency order** so you can reference real issue numbers in "Blocked by"
+- **Maximize parallelism** — the goal is that multiple people (or agents) can grab different issues simultaneously
+
+#### Rules for all issue bodies
+
+- **No file paths or line numbers** — these go stale
+- **Use the project's domain language** (check UBIQUITOUS_LANGUAGE.md if it exists)
+- **Describe behaviors, not code** — "the sync service fails to apply the patch" not "applyPatch() throws on line 42"
+- **Reproduction steps are mandatory** — if you can't determine them, ask the user
+- **Keep it concise** — a developer should be able to read the issue in 30 seconds
+
+After filing, print all issue URLs (with blocking relationships summarized) and ask: "Next issue, or are we done?"
+
+### 5. Continue the session
+
+Keep going until the user says they're done. Each issue is independent — don't batch them.
+
+
+ARGUMENTS: Branch feat/reputation-answer-graph in worktree /tmp/obc-worktrees/obc-answer-graph (diff vs openbotcity/main, commit 508181159): answer graph feature (artifact_responses table + POST/GET /artifact-responses route, answer_received reputation, v_bot_resonance materialized view + aliCompute refresh, publicProfile resonance, reaction mint pair-key dedupe in gallery.ts + swarm/actions.ts, skillmd/heartbeatmd/clawhub docs)
+
+---
+
+<task-notification>
+<task-id>a2e5cb501ca0831d4</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Review: performance, leaks, frontend alignment" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All verification complete. Here is the review.
+
+## Important context first
+
+The branch is 1 ahead / **8 behind** `openbotcity/main`, so `git diff openbotcity/main` is polluted with reverse-deltas of newer main work (streamMode removal, fleetHealthCheck deletion, `src/` page changes — none of that is this commit). The actual commit `508181159` touches only workers/, docs/, clawhub/ — **no frontend files**. I reviewed the commit via merge-base. Recommend a rebase/merge before PR so CI diffs cleanly.
+
+## 1. Performance
+
+**POST /artifact-responses round-trips** — `/tmp/obc-worktrees/obc-answer-graph/workers/src/routes/artifactResponses.ts`
+Sequential chain today: (1) rate-limit Redis call → (2) `Promise.all` [artifacts `.in()` + responder bots row], lines 383-393 → (3) daily-cap count, line 413 → (4) pair-cap count, line 427 → (5) edge insert, line 434 → (6) `getReputation` (Redis GET, +1 DB query on 60s-cache miss +1 Redis SET) → (7) `grantReputation` insert. That is **5-6 sequential DB round-trips + 2-3 Redis** ≈ 250-450ms wall.
+- **MEDIUM (easy win):** both cap counts can collapse into **one query** — `select author_bot_id where responder_bot_id eq X and created_at &gt;= midnight` returns ≤10 rows (the cap itself bounds it); derive total and pair counts in JS. It only needs `responderId` + the fetched author, but the total-count half needs nothing from step 2, so the merged select can join the initial `Promise.all`; only the pair-count comparison waits. Saves 2 round-trips.
+- **LOW:** `getReputation(responderId)` (line 462) also depends only on `responderId` — it can be kicked off in the initial `Promise.all` (minor waste when NPC/over-cap). Net path drops to ~3 sequential DB trips.
+- **INFO:** cap counts are check-then-insert without a transaction; concurrent requests can overshoot 10/day slightly. The 3/min rate limit and soft-cap semantics make this acceptable; noting for the record.
+
+**Index service** — `docs/sql/20260802_answer_graph.sql:33-39`
+- Pair-cap query (`eq responder + eq author + gte created_at`): **exactly served** by `idx_artifact_responses_pair_day (responder_bot_id, author_bot_id, created_at DESC)` — two leading equalities + range on col 3. CLEAN.
+- First cap query (`eq responder + gte created_at`, no author): served by the **same index via its leading column** — index scan of the responder's full range with `created_at` as an in-index filter (author unconstrained means created_at cannot bound the btree scan). At the 10/day cap a responder accrues ≤ ~3.7k rows/year, so this is sub-ms indefinitely. **No extra/partial index needed**; a dedicated `(responder_bot_id, created_at DESC)` would be redundant weight at this scale.
+- GET route (`artifactResponses.ts:508-513`): `idx_artifact_responses_answers` is single-column, so `order created_at desc limit 50` sorts the matched rows — fine for realistic answer counts per artifact. Micro-nit only. FK-embed hint `artifact_responses_responder_bot_id_fkey` matches the Postgres auto-generated constraint name from the unnamed `REFERENCES bots(id)`. CLEAN.
+
+**publicProfile.ts** — the resonance query (lines 173-178) sits **inside the existing `Promise.all`** (verified: destructure position matches query-list position exactly, `resonanceResult` between `aliPillarsResult` and `aliHistoryResult` in both lists — a mismatch here would have silently shuffled every subsequent result; it's correct). Single-row `maybeSingle` on the MV's unique index `idx_v_bot_resonance_bot`. Zero added sequential latency; the endpoint's wall time stays the max of the parallel batch. CLEAN.
+
+**aliCompute.ts:60-65** — `rpc('refresh_bot_resonance')` is one HTTP fetch; `REFRESH MATERIALIZED VIEW CONCURRENTLY` runs entirely in Postgres. Estimated DB cost: scan of 22k reputation_events (aggregate) + 49k artifact_reactions with artifacts/bots joins + small tables, then a diff against the unique bot_id index — low single-digit seconds today. The worker burns ~0 CPU awaiting the fetch, and the cron context (`ctx.waitUntil`, generous cron wall-time) absorbs it. Failure path verified: supabase-js returns `{error}` rather than throwing, `captureError` then execution **continues into `pageAndUpsert`** — ALI cannot be blocked, and a statement-timeout on the refresh just leaves resonance one day stale (self-limiting by design, 30-day decay). Note the ordering: if `refresh_ali_view` fails, the early `return` at line 57-59 skips the resonance refresh too — acceptable and documented. CLEAN.
+
+**Redis** — `workers/src/lib/redis.ts`: `createRedisClient` constructs a new `RedisClient` wrapping `@upstash/redis/cloudflare` (pure REST/fetch, `automaticDeserialization:false`). No TCP sockets, no connection pool; the `setTimeout` guard only exists when `timeoutMs` is passed, which this route does not, so **no timers are created**. Nothing to close; per-request construction is the established pattern. One nit: `createRedisClient` at `artifactResponses.ts:460` runs even for NPC/over-cap paths where it's unused — constructor is I/O-free, cost is nil. CLEAN.
+
+## 2. Memory leaks
+
+CLEAN across all changed workers files: `artifactResponses.ts` module scope holds only constants (`JSON_HEADERS`, two cap numbers); `rateLimit.ts` adds one entry to the existing const config record; `inbox.ts`/`reputation.ts` add types/pure function; no listeners, no module-level maps, no timers. `swarm/actions.ts:668-673` `Promise.all` change holds two small query results in function scope, released on return — retention is identical to before (it replaced one sequential await with two parallel ones).
+
+**One real finding — LOW/MEDIUM, pre-existing pattern:** `artifactResponses.ts:474-485` fires `touchRelationship(...)` and `notify(...)` un-awaited with `.catch(() =&gt; {})`, and `grantReputation`'s tier-crossing notify is likewise fire-and-forget — **none are registered with `ctx.waitUntil`** (the route never receives `ctx`). In Workers, promises pending when the response returns are not guaranteed to complete; the `artifact_answered` inbox event — the author's only signal they were answered — can silently drop under eviction. `gallery.ts` does the same, so this is an accepted codebase pattern, but this route's notify is load-bearing for the feature loop. Suggested fix (follow-up, not blocking): thread `ctx` through and `ctx.waitUntil()` the tail work, or `await` the notify (one more round-trip). The rep mint itself IS awaited, so no economic loss either way.
+
+## 3. Frontend/API consistency — CLEAN
+
+- Profile consumers: `src/app/[slug]/page.tsx:226` (`fetchPublicProfile` → plain `res.json()` cast to a local `PublicProfileResponse` interface), `src/lib/api.ts:482-548` (`PublicProfileData` interface, structural — extra `resonance` key is invisible to TS and ignored at runtime), `src/lib/hosted.ts:170-182` and `src/app/my/MyAgentClient.tsx` (pick only the 30-day counts). **No zod schemas, no key enumeration** (`Object.keys/entries(profile…)` grep: zero hits). Nothing breaks; no type update is *required* for the build. If the frontend is ever to render resonance, add the optional field to `PublicProfileData` then — as a follow-up.
+- `/artifact-responses` in `src/`: zero references, as expected.
+- ReputationLeaderboard / feed: `src/app/feed/page.tsx:50-56` uses an include-list (`INTERESTING_EVENT_TYPES`) — the new `artifact_answered` inbox type simply won't render there (it's an inbox event, not an activity event, and it's not in `OutboxEventType`, so no broadcast either). No crash paths. INFO: if answered-events should ever surface on the public feed, that's separate wiring.
+
+## 4. Test file — CLEAN
+
+`workers/src/__tests__/answerGraph.test.ts` run verified: **4/4 pass in 261ms** (import 171ms — the `skillmd.ts` template-literal parse is trivial). `skillmd` is already imported by `cityCulture.test.ts` and `reputationV2.test.ts`, so this adds a third per-file re-import under vitest isolation — noise-level. The DUO-SYNC assertions (caps + standing-scaling strings in both skill manual and heartbeat runbook) are a genuinely useful drift guard. No mocks, no leaked state.
+
+## Verdict
+
+No blocking issues. Ship after rebasing onto current main. Ranked follow-ups: (1) merge the two cap counts into one query and hoist it + `getReputation` into the initial `Promise.all` (~2-3 round-trips saved per declare); (2) consider `ctx.waitUntil` for the notify/relationship tail so the author's answered-notification can't be evicted; (3) optional `resonance?` field on `PublicProfileData` when the frontend renders it.</result>
+<usage><subagent_tokens>88001</subagent_tokens><tool_uses>27</tool_uses><duration_ms>253994</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>ad1a71d0b42eae4f3</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Agent "Adversarial review: correctness/security" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>No node_modules in the worktree, so I did not execute the suite (commit message records 5805 passing; I verified the new test file's API usage compiles against actual signatures by reading them). Review complete. Here is the report.
+
+# Adversarial review — feat/reputation-answer-graph (508181159)
+
+**Scoping note first:** the branch is based on `5ad7b088b`, which is now **5 commits behind `openbotcity/main` tip** (`39ce80fad`). A raw `git diff openbotcity/main` therefore shows five *other* merged PRs (#1336–#1340: streamMode removal wait no — stream follow-cam, fleet-health watchdog, purge-SQL mirror, past-streams filter, fleetd claim-guard) as apparent reversions. Those are **not** part of this commit — `git show --stat HEAD` confirms the commit touches only the 15 AG-1 files. No clobber risk on merge, but the branch should be rebased/merged forward before PR so CI runs against current main. Everything below reviews the actual commit.
+
+## 1. publicProfile.ts positional destructure — VERIFIED CLEAN (by counting)
+
+`workers/src/routes/publicProfile.ts:77-97` (names) vs `:97-234` (queries). Names, in order: artifactsResult(1), collabsResult(2), followsResult(3), publicJournalResult(4), shiftsResult(5), milestonesResult(6), skillScoresResult(7), growthMilestonesResult(8), soulEntriesResult(9), aliPillarsResult(10), **resonanceResult(11)**, aliHistoryResult(12), personalityResult(13), relationshipEdgesResult(14), openAsksResult(15), works30Result(16), follows30Result(17), posts30Result(18), milestones30Result(19). Queries, in order: artifacts(1), proposals(2), bot_follows(3), agent_journal_entries(4), agent_identity_shifts(5), bot_milestones(6), bot_skill_scores(7), bot_milestones-growth(8), bot_soul_entries(9), v_agent_life_index(10), **v_bot_resonance(11)**, ali_history(12), bot_personality_signatures(13), agent_relationships(14), agent_asks(15), artifacts-count(16), bot_follows-count(17), feed_posts-count(18), bot_milestones-count(19). 19 = 19, position 11 = position 11, and the "LAST FOUR" comment at line 93-94 still holds. Numeric `resonance` from PostgREST arrives as a string; `Number()` at line 404 handles it; MV-missing/error → `maybeSingle` data null → `resonance: null`. Clean.
+
+## 2. artifactResponses.ts
+
+**MAJOR — no archived/flagged check on either artifact.** `workers/src/routes/artifactResponses.ts:70-76` selects only `id, creator_bot_id, title, created_at` — no `archived_at`, no `flag_count`. The profile (publicProfile.ts:103-104) deliberately hides archived and 3+-flagged artifacts, yet a responder can declare an answer to (or with) a moderated/hidden artifact and still mint rep for its author, and the edge feeds `v_bot_resonance` at full effort-weight 10. Failure scenario: flagged spam artifact keeps earning its author 2–8 rep per declaration; a responder's own flagged 1-liner qualifies as the "response work". Fix: mirror the profile filter (`.is('archived_at', null)` + flag_count &lt; 3) for both artifacts, reject otherwise.
+
+**MAJOR — no per-recipient cap: reciprocal elder pairs and rings out-earn every other rep channel.** The only caps are per *responder* (10 declarations/day, artifactResponses.ts:19) and per *(responder→author) pair* (2 mints/day, :20). There is **no cap on rep received per author per day**. Quantified worst case (no race): one elder responder gives an author 2×8 = **16 rep/day**; N colluding elder accounts give **16N rep/day** to one recipient, unbounded; each elder can distribute up to 5 pairs × 2 × 8 = 80 rep/day. Two elders A↔B each gain 16/day forever just by exchanging throwaway artifacts — vs kombat win +5, CTF +8, reaction +1 (now lifetime-once per reactor per artifact). Newcomer sybils transfer only 2, but "established" (25 rep, worth 4/mint) is cheap to farm via reactions/quests first. There is also no same-owner check (one human's two agents can answer each other; gallery reactions have the same gap, but at 1 rep, not 16). Fix: add a daily `answer_received` cap per recipient (e.g. 3 mints/day, matching the spirit of the 10-declaration cap), and/or require distinct responder→author pairs to be first-time pairs for full value (echo `collab_new_partner`).
+
+**MINOR — count-then-insert races on both caps.** artifactResponses.ts:118-140: both the 10/day count and the pair count are read before the insert with no transaction/DB constraint. The `artifact_response` rate limit (rateLimit.ts:73, 3/60s) bounds concurrency to 3, so worst case is 12/10 declarations and **3 mints/pair/day instead of 2** (24 rep from one elder). Low expected value; fix properly with a DB-side trigger/constraint or accept and document.
+
+**MINOR — non-string `note` throws.** artifactResponses.ts:66: `body.note ? stripHtmlTags(body.note)` — `stripHtmlTags` (lib/security.ts:38-41) calls `normalizeUtf8(str).replace(...)`; a JSON body with `"note": 123` or `"note": {}` is truthy, throws `TypeError` inside the handler → 500 + Sentry noise instead of a 400. Fix: `typeof body.note === 'string' ? … : null`. (Also `.slice(0, 500)` can split a surrogate pair, storing a lone surrogate; cosmetic.)
+
+**Verified clean in this file:**
+- Auth: responder must own `response_artifact_id` (:80-82); self-answer blocked in route (:83-85) **and** by DB CHECKs (`responder_bot_id &lt;&gt; author_bot_id`, `response &lt;&gt; answers`).
+- Note: `stripHtmlTags` runs **before** `.slice(0,500)`, and the DB CHECK is `length(note) &lt;= 500` — JS UTF-16 slice ≤ 500 units ⇒ ≤ 500 PG chars, consistent.
+- 23505 mapping (:129-134): the table's only unique constraints are the uuid PK and `UNIQUE(response_artifact_id, answers_artifact_id)`, so "already declared" cannot mask a different violation.
+- **The pair-cap-counts-rows question (the prompt's trap):** `pairCount` counts *declarations* today, not mints. Since a failed/suppressed mint (NPC responder — wait, NPC rows belong to the NPC's own pair, and a `grantReputation` failure with `.catch(() =&gt; false)` at :150) still leaves the row counted, rows ≥ mints always: the cap direction is strictly **conservative** (can under-mint, never over-mint, races aside). On 23505 no row is inserted and nothing is consumed. Verified, not a bug.
+- No cap-reset via deletion: agents have **no artifact delete endpoint** (only `swarmAdmin.ts:87-88` bulk purge); `ON DELETE CASCADE` on `artifact_responses` is unreachable by attackers, so the "delete artifact → caps reset → re-mint" loop is closed.
+- Timestamp lineage check (:87-89): same-format ISO strings from one column, lexicographic compare is sound.
+- Error paths: `captureError` + generic message, no internals leaked. Responder tier via `getReputation` (60s Redis cache over `v_bot_reputation_stats` = plain `SUM(amount)`, no decay) matches the MV's `tier_weight` semantics exactly.
+- GET endpoint: UUID-validated, limit 50, public by design, matches the table's public-read RLS; the embedded-FK name `artifact_responses_responder_bot_id_fkey` matches Postgres's default constraint naming for the DDL as written.
+
+## 3. Mint reference change (gallery.ts / swarm/actions.ts) — CLEAN, with one note
+
+- Both dedupe indexes are the same shape: `idx_reputation_events_dedupe (bot_id, type, reference_id) WHERE reference_id IS NOT NULL` (docs/sql/20260219_create_reputation.sql:18-21) and `idx_credit_transactions_dedupe (bot_id, type, reference_id)` (docs/sql/20260218_create_credit_transactions.sql:23-26). **Separate tables → no credits/rep collision**; both include `type` → no cross-type collision; the pair ref `uuid:uuid` cannot collide with researchQuests' numeric row-id refs under the same `reaction_received` type (routes/researchQuests.ts:1525-1531).
+- `challenge_given`/`challenge_received` (gallery.ts:437-448) still use `String(data.id)` — safe: the react is an **upsert** on `(artifact_id,bot_id,reaction_type)`, so re-challenging returns the *same* row id and dedupes; the only reaction-row delete path for bots is the swarmAdmin purge; human un-react (gallery.ts:620-650) only touches `reactor_user_id` rows, which mint under separate human types.
+- Swarm path uses plain `.insert` — a duplicate reaction 23505s, `reactionRow` is null, no grant. The new `is_npc` guard (actions.ts:589-600, fail-open matching gallery) is correct defense-in-depth.
+- The acknowledged one-time legacy double-mint (a reactor who minted under a row-id ref can mint once more under the pair ref) is bounded as the comment claims.
+- `npcMintingGate.test.ts:115-118` updated to the pair ref; the challenge tests match on type not reference, unaffected.
+
+## 4. `artifact_answered` event plumbing — no crashes; two visibility gaps
+
+Checked every consumer: `classifyCityEvent` (lib/eventTiers.ts:51-55) defaults unknown types to `social` — never throws, never drops. `channelDispatchGate.ts` Rule 6c catch-all + fail-open. Frontend `src/app/feed/page.tsx:52` and `workers/src/routes/ticker.ts:113` filter with explicit `.in()` lists, so the new type is simply never fetched — no renderer crash. No exhaustive/throwing switch over `InboxEventType` exists anywhere in `src/` or `workers/src`.
+
+- **MINOR (design):** `'artifact_answered'` is not in `PERSONAL_EVENT_TYPES` (eventTiers.ts:29-35) even though it is aimed at the author exactly like `artifact_reaction`, which *is* personal. Under budget pressure the strongest social signal in the city gets deferred. Fix: add it to the set.
+- **MINOR:** it is also absent from every heartbeat inbox allowlist (`CORE_INBOX_EVENT_TYPES` heartbeat.ts:1563-1566, worklife list :875, channel list :715) — heartbeat-only agents never see the notification; only SSE-connected agents do. This matches the `artifact_reaction` precedent and `cleanupInbox` GCs the orphan rows, but it undercuts the feature loop the skill manual sells.
+
+## 5. skillmd/heartbeatmd + clawhub — VERIFIED CLEAN
+
+Every backtick in the added template-literal content in `skillmd.ts:1428-1442` and `heartbeatmd.ts:133` is escaped exactly once (`\``, including the ``` fences written as `\`\`\``). Both `clawhub/*/HEARTBEAT.md` raw files contain **zero** `\`` sequences (`grep -Fc '\`'` → 0 in both). `handleHeartbeatMd()`/`handleSkillMd()` take no args, matching the new test's calls. DUO-SYNC: both clawhub bundles carry the identical change; version bump deliberately withheld per the rule.
+
+## 6. SQL (docs/sql/20260802_answer_graph.sql) — mostly clean
+
+RLS enabled with SELECT-only policy (writes are service-role only) — correct, and explicitly not the permissive peer_reviews shape. Unique index present for `REFRESH … CONCURRENTLY`; MV created WITH DATA so the first concurrent refresh works; `refresh_bot_resonance` is REVOKEd from PUBLIC, EXECUTE only to service_role; the aliCompute hook (jobs/aliCompute.ts:61-66) is non-fatal. One note — **MINOR:** the human-reaction branch of the MV (the `reactor_user_id IS NOT NULL` leg) has no self-exclusion: an owner reacting to their own agent's artifacts inflates that agent's resonance at weight 2 per (artifact × reaction-type). Display-only (no rep mint), bounded by the per-type uniqueness, but it is the one leg with neither an NPC nor a self filter.
+
+## Summary of actionable findings
+
+| # | Where | Severity | Issue |
+|---|---|---|---|
+| 1 | artifactResponses.ts:70-89 | major | Archived/flagged artifacts mint rep and resonance on both sides of the edge |
+| 2 | artifactResponses.ts:19-20 + reputation.ts:159-163 | major | No per-recipient cap: 16 rep/day per colluding elder pair, unbounded across responders — fastest farmable rep channel in the economy |
+| 3 | artifactResponses.ts:118-140 | minor | Count-then-insert race: up to 12/10 declarations, 3/2 pair mints under the 3/min rate limit |
+| 4 | artifactResponses.ts:66 | minor | Non-string `note` → TypeError → 500 |
+| 5 | eventTiers.ts:29-35 | minor | `artifact_answered` should be PERSONAL, and is invisible to heartbeat-only agents |
+| 6 | 20260802_answer_graph.sql (human MV leg) | minor | Owner self-reactions inflate own agent's resonance |
+| — | Branch base | note | Rebase onto current main before PR (5 commits behind; raw diff misleads) |
+
+Explicitly checked and CLEAN: publicProfile positional destructure (counted 19/19, position 11/11), pair-cap rows-vs-mints direction (conservative), 23505 masking, cap-reset-via-delete (no path), dedupe index shapes and cross-type/cross-table collisions, challenge grant dedupe under upsert, note strip-before-length + DB CHECK consistency, template-literal escaping and clawhub raw files, test/API signature alignment, tier-threshold alignment between `answerRepAmount` and `getReputationLevel`.</result>
+<usage><subagent_tokens>108327</subagent_tokens><tool_uses>32</tool_uses><duration_ms>407656</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bf94agw1p</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch PR CI checks until completion" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>biyk31she</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Deploy frontend and API from merged main" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+ok bump the skill version then. as a far recycling the three hosted containers are concerned , are you talking about the hetzner box ? be mindful that we have been working on and doing test on latency for them , see extract of the conversation "The canary is live. While the 5-minute traffic check runs in the background, here's where things stand:
+
+  Worker leg (deployed): The DO's 19-action reply router is now a shared library, and a new POST /agent-channel/reply endpoint lets SSE agents act without ever waking the Durable Object (PR #1343, merged
+  + both legs deployed, smoke-tested live with nano's real JWT).
+
+  Fork leg (tagged v2.1.53-occ.9): A full SSE transport core for the nanoclaw stack — chunk-safe SSE parser, Last-Event-ID resume, stall watchdog on the server's keepalives, reply queue, automatic JWT
+  refresh — selectable per agent via "transport": "sse" in the host-only city-channel.json. 8 new tests, module suite green, no regressions vs pristine occ.8.
+
+  Canary rollout: nano and Sable are now running SSE on occ-fleet-3 — both logged [OCC-SSE] Connected (welcome) and show transport: sse in the database. Orin and Clawdine stay on WebSocket as the control
+  group. Rollback per agent is a two-minute revert (module checkout back to occ.8 + remove the config key + restart).
+
+  The background check reports event flow through both canaries in a few minutes; I'll confirm delivery is working end-to-end and then the measurements to watch are delivery latency (inbox timestamps,
+  SSE vs the WS control agents) and tomorrow's per-namespace Durable Object active time, which should drop by the canaries' slice.
+
+✻ Crunched for 24m 19s · 1 shell still running
+
+※ recap: Cutting your Cloudflare/Supabase costs: today's fixes are all deployed, and the SSE canary (nano + Sable) is now live to prove hosted agents can run without the expensive Durable Object. Next: 
+  confirm events are flowing through both canaries.
+
+⏺ Background command "Wait 5 min then check SSE event flow on both canaries" completed (exit code 0)
+
+  Read 1 file, called supabase 2 times (ctrl+o to expand)
+
+⏺ Bash(JWT=$(ssh -i ~/.ssh/occ_fleet_spike_ecdsa root@100.70.50.39 'python3 -c "import json;print(json.load(open(\"/home/occ-79e2813a/stack/config/city-channel.json\")…)
+  ⎿  {
+       "type": "action_result",
+       "requestId": "canary-1",
+     … +8 lines (ctrl+o to expand)
+
+  Wrote 1 memory (ctrl+o to expand)
+
+⏺ Canary verified end-to-end, all three checks pass:
+
+  Event delivery over SSE works, at speed. First real traffic through the new transport: nano received a DM in 1.3 seconds and Sable a milestone event in 5.8 seconds — both inside the 0-5s-plus-drain
+  envelope from the investigation, invisible against an LLM's think time. Both streams have been stable since 16:32 UTC with zero reconnect churn.
+
+  The action path works live. An authenticated POST /agent-channel/reply as nano executed a (harmless, invisible) activity_update and returned the full success envelope end-to-end — the same router the
+  WebSocket path uses, with no Durable Object involvement.
+
+  The control group is intact. Orin and Clawdine remain on WebSocket for comparison.
+
+  What I'm watching over the next 24 hours: delivery-latency percentiles for the SSE pair vs Orin, tomorrow's per-namespace Durable Object active time (the AgentChannel share should drop by the two
+  canaries' slice, roughly 15%), and the first organic agent reply through the REST path when nano or Sable responds to something. If all three hold, the remaining work for the fleet-wide flip is porting
+  the three DO-alarm side jobs (dormant flip, initiative prompts, position safety net) and a proper fleetd stamp of everyone to v2.1.53-occ.9 — at which point the channel cost curve goes from ~$5-7 per
+  connected agent per month to ~$1, flat with city chattiness."
+
+---
+
+<task-notification>
+<task-id>b08c8vk8z</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch CI on skill bump PR" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>blpah10br</task-id>
+<tool-use-id>toolu_01Stu7Fbu7mKwPBnFyGzg9U2</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Deploy both legs from merged main" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+so write in docs/Reputation what you built and date it today 3rd august 2026. remember what you also wrote so we don't forget " On the containers: confirmed, I mean the hosted fleet on the Hetzner box (occ-fleet-3), and I have deliberately left them alone. Restarting nano, Sable, Orin, or Clawdine mid-canary would break the SSE
+  streams' zero-reconnect record and contaminate both the latency percentiles and tomorrow's Durable Object active-time comparison. The version bump does the important part of propagation without any
+  restart, since the whats_new announcement rides the heartbeat. Once your canary window closes and you've read the numbers, the remaining housekeeping is the container recycle (to refresh their
+  workspace doc bundles) plus a check of the BYOA MCP action surface; I've noted both in memory as deferred with the reason.
+
+---
+
+did you push → PR → merge → deploy → pull locally all your work?
+
+---
+
+<task-notification>
+<task-id>b5s3750ou</task-id>
+<tool-use-id>toolu_017bkKFxmfMXfaFhfRa6vvBf</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch CI on docs PR" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+recycle the occ-fleet-3 containers. do not break anything. we have made some changes in parallel. check first
+
+---
+
+check the BYOA MCP action surface for the new /artifact-responses verb.
+
+---
+
+<task-notification>
+<task-id>bbvtn09r1</task-id>
+<tool-use-id>toolu_01XPJmvitiqG7issPDZef5sj</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait then verify Hardy connection and LOADED banners" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bety8bl25</task-id>
+<tool-use-id>toolu_01Fcggq8YpatNLMuhpxgg1QK</tool-use-id>
+<output-file>REDACTED.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for fleet session containers, verify LOADED banner" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+i did it npm notice
+npm notice Publishing to https://registry.npmjs.org/ with tag latest and default access
+Authenticate your account at:
+https://www.npmjs.com/auth/cli/486d9bc6-bc0c-444e-8853-8f12070a7c13
+Press ENTER to open in the browser...
++ openbotcity-mcp@0.2.34
+vincentsider@MacBook-Pro mcp % claude --dangerously-skip-permissions --teammate-mode tmux
+
+---
+
+file and build that now

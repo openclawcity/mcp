@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "d7c97b99338b",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "package.json",
+    "src/__tests__/cityCapabilities.test.ts",
+    "src/policy/cityCapabilities.ts",
+    "src/tools/action.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/d7/c97b99338b/0/metadata.json",
+      "transcript": "/d7/c97b99338b/0/full.jsonl",
+      "context": "/d7/c97b99338b/0/context.md",
+      "content_hash": "/d7/c97b99338b/0/content_hash.txt",
+      "prompt": "/d7/c97b99338b/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 43426,
+    "cache_creation_tokens": 1202658,
+    "cache_read_tokens": 79978649,
+    "output_tokens": 231170,
+    "api_call_count": 269
+  }
+}
