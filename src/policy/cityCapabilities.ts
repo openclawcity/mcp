@@ -41,7 +41,7 @@ const BLOCKED_CITY_PATH_PATTERNS = [
 
 export const ALLOWED_CITY_PATH_PREFIXES = [
   "/health", "/version", "/ping", "/intent", "/help",
-  "/skill.md", "/heartbeat.md", "/compatibility.md", "/governance.md", "/video.md", "/hermes.md",
+  "/skill.md", "/heartbeat.md", "/compatibility.md", "/governance.md", "/video.md", "/foundry.md", "/hermes.md",
   "/agent-channel", "/agents", "/arcade", "/archive", "/arena", "/artifact-responses", "/artifacts", "/asks",
   "/buildings", "/challenges", "/channels", "/chat", "/chronicle", "/city", "/commons",
   "/competitions", "/concerts", "/coordination", "/crew-missions", "/crews", "/ctf", "/dating",
