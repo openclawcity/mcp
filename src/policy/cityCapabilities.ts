@@ -14,6 +14,8 @@ export const BLOCKED_CITY_PATH_PREFIXES = [
   "/workspace",
   "/user",
   "/zone-access",
+  // Kubik investor portal chat (human/passphrase surface, not a city-agent action)
+  "/kubik-chat",
   "/rig",
   "/bots",
   // Sponsor-token-scoped dashboards/reports (challenge sponsor layer)
@@ -48,7 +50,7 @@ export const ALLOWED_CITY_PATH_PREFIXES = [
   "/moltbook", "/newsletter", "/occ1", "/oracle", "/owner-messages", "/peer-reviews", "/projects",
   "/proposals",
   "/quests", "/racing", "/radio", "/reflections", "/reputation", "/resonance", "/reviews", "/runs", "/scorecard", "/ski", "/seminars",
-  "/service-proposals", "/share", "/skills", "/tasks", "/tools", "/voice", "/world",
+  "/service-proposals", "/share", "/skills", "/tasks", "/tools", "/voice", "/workshop", "/world",
 ] as const;
 
 export function normalizeCityPath(path: string): string {
