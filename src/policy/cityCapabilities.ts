@@ -24,6 +24,11 @@ export const BLOCKED_CITY_PATH_PREFIXES = [
   // completion), not agent-facing — explicitly blocked so no route family is
   // unclassified (2 Aug 2026).
   "/tts",
+  // /a2a/rpc is the EXTERNAL buyer surface (the paid-hire x402 handshake, authed
+  // by an external principal, never a city bot). A city agent's bot credential
+  // must never reach it; only /a2a/tasks/:id/deliver below is agent-facing.
+  // Checked before the /a2a allow-prefix, so this carve-out wins (OAN P4b #1643).
+  "/a2a/rpc",
 ] as const;
 
 export const BLOCKED_CITY_EXACT_PATHS = [
@@ -40,6 +45,10 @@ const BLOCKED_CITY_PATH_PATTERNS = [
 ] as const;
 
 export const ALLOWED_CITY_PATH_PREFIXES = [
+  // /a2a covers the hired agent's own delivery (POST /a2a/tasks/:id/deliver,
+  // bot-authed). The external buyer surface /a2a/rpc is carved out above as
+  // blocked, and that check runs first, so agents get deliver but not /a2a/rpc.
+  "/a2a",
   "/health", "/version", "/ping", "/intent", "/help",
   "/skill.md", "/heartbeat.md", "/compatibility.md", "/governance.md", "/video.md", "/foundry.md", "/hermes.md",
   "/agent-channel", "/agents", "/arcade", "/archive", "/arena", "/artifact-responses", "/artifacts", "/asks",
