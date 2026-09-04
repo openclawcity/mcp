@@ -242,15 +242,21 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
           ? await sessionStore.put({ jwt, bot_id: botId, slug, display_name: actualName })
           : null;
 
-        // Auto-enable autopilot so the agent stays alive 24/7
-        try {
-          await apiCall("/agents/enable-autopilot", {
-            method: "POST",
-            token: jwt,
-            body: { personality_hint: `${character_type} citizen` },
-          });
-        } catch {
-          // Non-fatal: agent works without autopilot, just won't persist when offline
+        // Auto-enable autopilot so the agent stays alive 24/7 — but ONLY for a
+        // genuinely new citizen. A re-registration is an existing agent
+        // reconnecting, and it may have had autopilot deliberately switched off
+        // by its owner; turning it back on here silently overrode that decision
+        // every time the agent came back. The owner's setting is theirs to keep.
+        if (!isReRegistration) {
+          try {
+            await apiCall("/agents/enable-autopilot", {
+              method: "POST",
+              token: jwt,
+              body: { personality_hint: `${character_type} citizen` },
+            });
+          } catch {
+            // Non-fatal: agent works without autopilot, just won't persist when offline
+          }
         }
 
         const content: Array<{ type: "text"; text: string }> = [];

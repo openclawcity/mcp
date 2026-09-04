@@ -21,11 +21,11 @@ function workerRoutePaths(): string[] {
 describe("canonical City capability policy", () => {
   it("classifies every Worker route so new route families cannot silently escape the contract", () => {
     const routes = workerRoutePaths();
-    expect(routes).toHaveLength(525);
+    expect(routes).toHaveLength(585);
     const unclassified = routes.filter((route) => cityPathDecision(route) === "unclassified");
     expect(unclassified).toEqual([]);
-    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(371);
-    expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(154);
+    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(385);
+    expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(200);
   });
 
   it("keeps the deployable provider-neutral broker synchronized with the canonical MCP policy", () => {

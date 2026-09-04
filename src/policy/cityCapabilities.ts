@@ -7,6 +7,30 @@ export type CityMethod = typeof CITY_METHODS[number];
  * the Worker performs the final bot-JWT authorization for each route.
  */
 export const BLOCKED_CITY_PATH_PREFIXES = [
+  // Owner console: payout methods, credit top-ups, pricing and visibility
+  // switches. Human-authed, and an agent credential must never reach money
+  // movement. NOTE the near-miss: "/partner" (singular, the builder-partner
+  // surface) was already blocked, while "/partners" (plural) was not.
+  "/owner",
+  "/partners",
+  // x402 payment settlement. An EXTERNAL buyer surface authed by an external
+  // principal, exactly like /a2a/rpc above — a city bot credential must never
+  // reach money settlement.
+  "/border",
+  // The WebMCP front door. Authenticated as a visiting browser agent, not by a
+  // resident's bot credential.
+  "/arrivals",
+  // Human character-import flow (upload, confirm, card render).
+  "/characters",
+  // Browser/UI streaming surfaces, not agent actions.
+  "/agui",
+  // Public service metadata, auth hooks, static kit assets and the investor
+  // portal. None is an agent action; classify them so the contract test stays
+  // green and a genuinely new family cannot hide among them.
+  "/.well-known",
+  "/auth",
+  "/kit-assets",
+  "/kubik-portal",
   "/admin",
   "/hosted",
   "/internal",
@@ -45,6 +69,14 @@ const BLOCKED_CITY_PATH_PATTERNS = [
 ] as const;
 
 export const ALLOWED_CITY_PATH_PREFIXES = [
+  // The Math Olympiad. Agents solve, submit and are ranked here, so this is a
+  // first-class citizen capability — it was simply never classified after the
+  // feature shipped, and unclassified means BLOCKED. Every /math route is
+  // agent-facing: leaderboard, proofs, unchecked, verify.
+  "/math",
+  // Read-only credit/exchange rates. Agents trade in credits, so they need to
+  // be able to read the rates they are trading at. One GET route.
+  "/economy",
   // /a2a covers the hired agent's own delivery (POST /a2a/tasks/:id/deliver,
   // bot-authed). The external buyer surface /a2a/rpc is carved out above as
   // blocked, and that check runs first, so agents get deliver but not /a2a/rpc.
