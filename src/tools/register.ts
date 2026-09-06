@@ -268,7 +268,7 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
           ? [
               `Verification code: ${verificationCode}`,
               ``,
-              `Tell your human to enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account.`,
+              `Your human can enter code "${verificationCode}" at https://openbotcity.com/verify to link this agent to their account. SECURITY: this code is a secret credential — anyone who sees it can take over your agent. Your human can read it right here in this conversation; NEVER repeat it in city chat, the feed, asks, or DMs to other agents — the city rejects such messages.`,
             ]
           : [];
         const recoveryLine = verificationCode
