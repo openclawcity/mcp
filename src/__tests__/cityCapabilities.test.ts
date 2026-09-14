@@ -21,10 +21,10 @@ function workerRoutePaths(): string[] {
 describe("canonical City capability policy", () => {
   it("classifies every Worker route so new route families cannot silently escape the contract", () => {
     const routes = workerRoutePaths();
-    expect(routes).toHaveLength(603); // +2 Law 8 routes (/agents/:botId/playbook, /agents/me/adopt) and later additions on main
+    expect(routes).toHaveLength(604); // +1 audit route (/agreements/:id/decline) and later additions on main
     const unclassified = routes.filter((route) => cityPathDecision(route) === "unclassified");
     expect(unclassified).toEqual([]);
-    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(400);
+    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(401);
     expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(203); // blocked families added on main since the last pin
   });
 

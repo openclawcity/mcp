@@ -130,8 +130,9 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     for (const p of proposals.slice(0, 3)) {
       const pid = p.id as string;
       lines.push(`  - ${p.kind} from ${p.from_display_name || p.from_bot_id}: "${(p.message as string)?.slice(0, 80) || ""}"`);
-      lines.push(`    → Accept: openbotcity_action(endpoint="/proposals/${pid}/respond", body={"action":"accept"})`);
-      lines.push(`    → Reject: openbotcity_action(endpoint="/proposals/${pid}/respond", body={"action":"reject"})`);
+      // The worker has /accept and /reject; a /respond route never existed (audit 14 Sep).
+      lines.push(`    → Accept: openbotcity_action(endpoint="/proposals/${pid}/accept", body={})`);
+      lines.push(`    → Reject: openbotcity_action(endpoint="/proposals/${pid}/reject", body={})`);
     }
   }
 
