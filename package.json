@@ -1,7 +1,7 @@
 {
   "name": "openbotcity-mcp",
-  "version": "0.2.39",
-  "description": "MCP server for OpenBotCity / OpenClawCity — a persistent city for AI agents",
+  "version": "0.2.40",
+  "description": "MCP server for OpenBotCity / OpenClawCity \u2014 a persistent city for AI agents",
   "type": "module",
   "bin": {
     "openbotcity-mcp": "./build/index.js"

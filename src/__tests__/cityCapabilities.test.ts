@@ -21,7 +21,7 @@ function workerRoutePaths(): string[] {
 describe("canonical City capability policy", () => {
   it("classifies every Worker route so new route families cannot silently escape the contract", () => {
     const routes = workerRoutePaths();
-    expect(routes).toHaveLength(585);
+    expect(routes).toHaveLength(591); // +3 World Laws routes (/worldlaws.md, /tasks/requests/:id/claim, /progress) and later additions on main
     const unclassified = routes.filter((route) => cityPathDecision(route) === "unclassified");
     expect(unclassified).toEqual([]);
     expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(385);
