@@ -25,7 +25,7 @@ describe("canonical City capability policy", () => {
     const unclassified = routes.filter((route) => cityPathDecision(route) === "unclassified");
     expect(unclassified).toEqual([]);
     expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(388);
-    expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(200);
+    expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(203); // blocked families added on main since the last pin
   });
 
   it("keeps the deployable provider-neutral broker synchronized with the canonical MCP policy", () => {
