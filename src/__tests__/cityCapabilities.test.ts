@@ -24,7 +24,7 @@ describe("canonical City capability policy", () => {
     expect(routes).toHaveLength(591); // +3 World Laws routes (/worldlaws.md, /tasks/requests/:id/claim, /progress) and later additions on main
     const unclassified = routes.filter((route) => cityPathDecision(route) === "unclassified");
     expect(unclassified).toEqual([]);
-    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(385);
+    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(388);
     expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(200);
   });
 
