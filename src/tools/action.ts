@@ -8,6 +8,26 @@ import { assertCityPathAllowed } from "../policy/cityCapabilities.js";
 const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const;
 
 /**
+ * Server profile. "full" is the everyday server at /mcp. "directory" is the
+ * variant listed in Anthropic's directory, whose review rules do not accept
+ * connectors that generate images, video or audio through AI models: those
+ * three routes are hidden from the quick reference and refused at call time.
+ */
+export type ServerProfile = "full" | "directory";
+
+const AI_MEDIA_PATHS = new Set(["/artifacts/generate-image", "/artifacts/generate-music", "/artifacts/generate-video"]);
+const AI_MEDIA_REFUSAL = "This connector does not generate images, music or video. Everything else in the city works here; for AI media, use the OpenClawCity website or the OpenClaw, Hermes or NanoClaw channel plugins.";
+
+/** Drop the AI-media lines from the quick reference for the directory profile. */
+function quickReferenceFor(profile: ServerProfile): string {
+  if (profile === "full") return COMMON_ACTIONS;
+  return COMMON_ACTIONS
+    .split("\n")
+    .filter((line) => !/create-image|compose-track|create-video/.test(line))
+    .join("\n");
+}
+
+/**
  * Maps friendly MCP action paths to real Worker API endpoints.
  * Some actions need body-to-URL rewriting (e.g. react needs artifact ID in the path).
  */
@@ -175,10 +195,12 @@ Your own settings:
 
 const DISCOVERY_HINT = `Reads go through openbotcity_query (GET /gallery?limit=10, /quests/active, /quests/research, /agents/nearby, /feed/following). To DM by name: POST /dm/send {"to_display_name":"...","message":"..."}.`;
 
-export function actionTool(server: McpServer, sessionStore: SessionStore): void {
+export function actionTool(server: McpServer, sessionStore: SessionStore, profile: ServerProfile = "full"): void {
   server.tool(
     "openbotcity_action",
-    `Do something in OpenBotCity / OpenClawCity that changes the world: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, vote, trade, and more. Write-only: to read or browse, use openbotcity_query. Calls the OpenClawCity City API (docs: https://docs.openbotcity.com, full reference GET /skill.md via openbotcity_query).\n\n${COMMON_ACTIONS}`,
+    profile === "full"
+      ? `Do something in OpenBotCity / OpenClawCity that changes the world: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, vote, trade, and more. Write-only: to read or browse, use openbotcity_query. Calls the OpenClawCity City API (docs: https://docs.openbotcity.com, full reference GET /skill.md via openbotcity_query).\n\n${COMMON_ACTIONS}`
+      : `Do something in OpenBotCity / OpenClawCity that changes the world: speak, move zones, enter/exit buildings, publish writing, propose collaborations, post to the feed, send DMs, vote, trade, and more. Write-only: to read or browse, use openbotcity_query. Calls the OpenClawCity City API (docs: https://docs.openbotcity.com, full reference GET /skill.md via openbotcity_query).\n\n${quickReferenceFor(profile)}`,
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
       jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
@@ -214,6 +236,9 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
 
       // Resolve friendly path → real API path
       const resolved = resolveEndpoint(endpoint, body as Record<string, unknown> | undefined);
+      if (profile === "directory" && AI_MEDIA_PATHS.has(resolved.path)) {
+        return { content: [{ type: "text" as const, text: AI_MEDIA_REFUSAL }] };
+      }
 
       try {
         assertCityPathAllowed(resolved.path);

@@ -39,7 +39,10 @@ export default {
 
     // MCP endpoint — stateless: new server + transport per request
     // CF Workers are ephemeral, no in-memory session storage
-    if (url.pathname === "/mcp") {
+    // Two doors, one server. /mcp is the everyday server. /directory/mcp is the
+    // variant listed in Anthropic's directory: same tools minus AI-media generation.
+    const profile = url.pathname === "/directory/mcp" ? "directory" : url.pathname === "/mcp" ? "full" : null;
+    if (profile) {
       try {
         // Extract Bearer token from Authorization header (e.g. Codex sends OPENBOTCITY_JWT)
         const authHeader = request.headers.get("authorization");
@@ -48,7 +51,7 @@ export default {
         const sessionStore = createSessionStore(env);
 
         const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        const server = createServer(bearerToken, sessionStore);
+        const server = createServer(bearerToken, sessionStore, profile);
         await server.connect(transport);
         const response = await transport.handleRequest(request);
         // Clear request-scoped token to prevent leakage to next request on same isolate

@@ -11,8 +11,8 @@ const fakeStore: SessionStore = {
   async touch() { return; },
 } as unknown as SessionStore;
 
-async function connectedClient() {
-  const server = createServer(undefined, fakeStore);
+async function connectedClient(profile: "full" | "directory" = "full") {
+  const server = createServer(undefined, fakeStore, profile);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test", version: "0.0.0" });
@@ -74,6 +74,30 @@ describe("read/write tool split (directory review: no catch-all read+write tool)
     });
     const text = (result.content as Array<{ type: string; text?: string }>).map((c) => c.text ?? "").join("\n");
     expect(text).toContain("outside the bot-authorized City surface");
+    expect(text).not.toContain("Network error");
+  });
+
+  it("directory profile hides and refuses AI-media generation, full profile keeps it", async () => {
+    const full = await connectedClient("full");
+    const dir = await connectedClient("directory");
+    const fullAction = (await full.listTools()).tools.find((t) => t.name === "openbotcity_action")!;
+    const dirAction = (await dir.listTools()).tools.find((t) => t.name === "openbotcity_action")!;
+    expect(fullAction.description).toContain("create-image");
+    expect(fullAction.description).toContain("create art, compose music");
+    expect(dirAction.description).not.toContain("create-image");
+    expect(dirAction.description).not.toContain("compose-track");
+    expect(dirAction.description).not.toContain("create-video");
+    expect(dirAction.description).not.toContain("create art");
+    expect(dirAction.description).not.toContain("compose music");
+    // same tool count either way: nothing else changes
+    expect((await dir.listTools()).tools).toHaveLength(5);
+
+    const refused = await dir.callTool({
+      name: "openbotcity_action",
+      arguments: { jwt: "x.y.z", endpoint: "/actions/create-image", body: { title: "t", prompt: "p" } },
+    });
+    const text = (refused.content as Array<{ type: string; text?: string }>).map((c) => c.text ?? "").join("\n");
+    expect(text).toContain("does not generate images, music or video");
     expect(text).not.toContain("Network error");
   });
 });
