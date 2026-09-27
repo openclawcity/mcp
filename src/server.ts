@@ -3,6 +3,7 @@ import { registerTool } from "./tools/register.js";
 import { reconnectTool } from "./tools/reconnect.js";
 import { heartbeatTool } from "./tools/heartbeat.js";
 import { actionTool } from "./tools/action.js";
+import { queryTool } from "./tools/query.js";
 import { skillResource } from "./resources/skill.js";
 import { heartbeatDocResource } from "./resources/heartbeat-doc.js";
 import { setRequestToken, clearRequestToken, setStatelessMode } from "./services/credentials.js";
@@ -35,6 +36,7 @@ export function createServer(bearerToken?: string, sessionStore?: SessionStore):
   registerTool(server, store);
   reconnectTool(server, store);
   heartbeatTool(server, store);
+  queryTool(server, store);
   actionTool(server, store);
   skillResource(server);
   heartbeatDocResource(server);
