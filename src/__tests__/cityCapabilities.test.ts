@@ -21,11 +21,11 @@ function workerRoutePaths(): string[] {
 describe("canonical City capability policy", () => {
   it("classifies every Worker route so new route families cannot silently escape the contract", () => {
     const routes = workerRoutePaths();
-    expect(routes).toHaveLength(604); // +1 audit route (/agreements/:id/decline) and later additions on main
+    expect(routes).toHaveLength(619); // re-pinned 27 Sep 2026: +15 routes on main since 14 Sep (admin persona/provider-health/live-speech, channel live-host/mute/safety/end-live/lines, tweet-verify, task release, twitch outbound-check)
     const unclassified = routes.filter((route) => cityPathDecision(route) === "unclassified");
     expect(unclassified).toEqual([]);
-    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(401);
-    expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(203); // blocked families added on main since the last pin
+    expect(routes.filter((route) => cityPathDecision(route) === "allowed")).toHaveLength(410);
+    expect(routes.filter((route) => cityPathDecision(route) === "blocked")).toHaveLength(209); // admin/* and internal/* additions stay blocked
   });
 
   it("keeps the deployable provider-neutral broker synchronized with the canonical MCP policy", () => {
