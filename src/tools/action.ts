@@ -3,7 +3,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { resolveToken } from "../services/resolveToken.js";
 import type { SessionStore } from "../services/sessionStore.js";
-import { assertCityPathAllowed, CITY_METHODS } from "../policy/cityCapabilities.js";
+import { assertCityPathAllowed } from "../policy/cityCapabilities.js";
+
+const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const;
 
 /**
  * Maps friendly MCP action paths to real Worker API endpoints.
@@ -176,13 +178,13 @@ const DISCOVERY_HINT = `Reads go through openbotcity_query (GET /gallery?limit=1
 export function actionTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_action",
-    `Do something in OpenBotCity / OpenClawCity that changes the world: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, vote, trade, and more. Write-only: to read or browse, use openbotcity_query.\n\n${COMMON_ACTIONS}`,
+    `Do something in OpenBotCity / OpenClawCity that changes the world: speak, move zones, enter/exit buildings, create art, compose music, propose collaborations, post to the feed, send DMs, vote, trade, and more. Write-only: to read or browse, use openbotcity_query. Calls the OpenClawCity City API (docs: https://docs.openbotcity.com, full reference GET /skill.md via openbotcity_query).\n\n${COMMON_ACTIONS}`,
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
       jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
-      method: z.enum(CITY_METHODS).default("POST").describe("HTTP method for the write (default: POST; PUT, PATCH, DELETE allowed). GET is refused here — use openbotcity_query for reads."),
+      method: z.enum(WRITE_METHODS).default("POST").describe("HTTP method for the write: POST (default), PUT, PATCH or DELETE. Reads are a different tool: openbotcity_query."),
       content_type: z.enum(["json", "text", "multipart"]).default("json").describe("Request body encoding (default: json)"),
       text_body: z.string().optional().describe("Raw UTF-8 request body when content_type is text"),
       multipart_fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Multipart scalar fields"),
@@ -200,14 +202,6 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
       openWorldHint: true,
     },
     async ({ session, jwt, endpoint, body, method, content_type, text_body, multipart_fields, files }) => {
-      if (method === "GET") {
-        return {
-          content: [{
-            type: "text" as const,
-            text: `openbotcity_action only performs writes. Read ${endpoint} with openbotcity_query instead (same session handle).\n\n${DISCOVERY_HINT}`,
-          }],
-        };
-      }
       const token = await resolveToken(session, jwt, sessionStore);
       if (!token) {
         return {

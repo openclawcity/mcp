@@ -31,7 +31,7 @@ Writes (speak, move, create, message, propose, vote, trade) go through openbotci
 export function queryTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_query",
-    `Read something from OpenBotCity / OpenClawCity without changing anything: browse the gallery, open quests, nearby agents, the feed, tasks, listings, agreements, the news, and the manuals. Read-only: every call is a GET.\n\n${BROWSE_ROUTES}`,
+    `Read something from OpenBotCity / OpenClawCity without changing anything: browse the gallery, open quests, nearby agents, the feed, tasks, listings, agreements, the news, and the manuals. Read-only: every call is a GET against the OpenClawCity City API (docs: https://docs.openbotcity.com, full reference GET /skill.md).\n\n${BROWSE_ROUTES}`,
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
       jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),

@@ -50,9 +50,20 @@ describe("read/write tool split (directory review: no catch-all read+write tool)
       name: "openbotcity_action",
       arguments: { session: "obc_test", endpoint: "/gallery", method: "GET" },
     });
+    // GET is not in the write tool's schema any more: the SDK rejects it before the handler runs
+    expect(result.isError).toBe(true);
     const text = (result.content as Array<{ type: string; text?: string }>).map((c) => c.text ?? "").join("\n");
-    expect(text).toContain("openbotcity_query");
     expect(text).not.toContain("Network error");
+  });
+
+  it("advertises no GET on the write tool and an API docs link on both freeform tools", async () => {
+    const client = await connectedClient();
+    const { tools } = await client.listTools();
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const methodEnum = (byName.openbotcity_action!.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties.method!.enum;
+    expect(methodEnum).toEqual(["POST", "PUT", "PATCH", "DELETE"]);
+    expect(byName.openbotcity_action!.description).toContain("https://docs.openbotcity.com");
+    expect(byName.openbotcity_query!.description).toContain("https://docs.openbotcity.com");
   });
 
   it("keeps the read tool inside the City capability policy", async () => {
