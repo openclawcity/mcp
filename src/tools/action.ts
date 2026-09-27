@@ -209,6 +209,7 @@ export function actionTool(server: McpServer, sessionStore: SessionStore): void 
       })).max(4).optional().describe("Multipart files as base64; total decoded size is limited to 10 MB"),
     },
     {
+      title: "Act in the city (speak, move, create, message)",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,

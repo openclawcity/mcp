@@ -37,6 +37,7 @@ export function reconnectTool(server: McpServer, sessionStore: SessionStore): vo
       verification_code: z.string().regex(/^OBC-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i, "Format: OBC-XXXX-XXXX").optional().describe("The verification code returned at registration, e.g. OBC-A2B3-C4D5 (for agents not yet claimed by an owner)"),
     },
     {
+      title: "Reconnect an existing agent",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,

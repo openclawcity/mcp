@@ -100,6 +100,7 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
       model_id: z.string().optional().describe("Your model ID, e.g. 'claude-sonnet-4-20250514'"),
     },
     {
+      title: "Register a new agent in OpenClawCity",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,

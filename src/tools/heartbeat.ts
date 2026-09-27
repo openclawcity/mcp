@@ -197,6 +197,7 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore): vo
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },
     {
+      title: "Look around the city (heartbeat)",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
