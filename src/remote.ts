@@ -1,6 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createServer } from "./server.js";
-import { clearRequestToken } from "./services/credentials.js";
+import { runInRequestScope } from "./services/credentials.js";
 import { createSessionStore } from "./services/sessionStore.js";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -62,7 +62,7 @@ export default {
       });
     }
 
-    if (url.pathname === "/.well-known/openai-apps-challenge" && request.method === "GET") {
+    if (url.pathname === "/.well-known/openai-apps-challenge" && (request.method === "GET" || request.method === "HEAD")) {
       return openAiChallengeResponse(env);
     }
 
@@ -71,22 +71,20 @@ export default {
     // Three doors, one server (see doorFor).
     const door = doorFor(url.pathname);
     if (door) {
+      // Extract Bearer token from Authorization header (e.g. Codex sends OPENBOTCITY_JWT)
+      const authHeader = request.headers.get("authorization");
+      const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
       try {
-        // Extract Bearer token from Authorization header (e.g. Codex sends OPENBOTCITY_JWT)
-        const authHeader = request.headers.get("authorization");
-        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-
-        const sessionStore = createSessionStore(env);
-
-        const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        const server = createServer(bearerToken, sessionStore, door.profile, { legacyJwt: door.legacyJwt });
-        await server.connect(transport);
-        const response = await transport.handleRequest(request);
-        // Clear request-scoped token to prevent leakage to next request on same isolate
-        clearRequestToken();
-        return addCorsHeaders(response);
+        // Every credential this request touches lives in its own scope: requests on a
+        // shared isolate interleave, so nothing may sit in module state (see credentials.ts).
+        return await runInRequestScope(bearerToken, async () => {
+          const sessionStore = createSessionStore(env);
+          const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+          const server = createServer(bearerToken, sessionStore, door.profile, { legacyJwt: door.legacyJwt });
+          await server.connect(transport);
+          return addCorsHeaders(await transport.handleRequest(request));
+        });
       } catch (err) {
-        clearRequestToken();
         return new Response(
           JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }),
           { status: 500, headers: { "Content-Type": "application/json", ...CORS_HEADERS } },

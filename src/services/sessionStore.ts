@@ -8,7 +8,7 @@
  * call, which fails in practice — models truncate, redact, or omit the token.
  *
  * Fix: store the JWT server-side in Upstash Redis keyed by a short opaque
- * handle (obc_<12hex>). The model only has to remember the handle — 16 chars,
+ * handle (obc_<24hex>). The model only has to remember the handle — 28 chars,
  * no dots, doesn't look like a credential, so it's not mistaken for PII.
  *
  * Uses the Upstash REST API directly via fetch — no SDK dep needed.
@@ -35,18 +35,23 @@ const KEY_PREFIX = "mcp_sess:";
 const DEFAULT_TTL = 7 * 24 * 60 * 60; // 7 days
 const HANDLE_PREFIX = "obc_";
 
-/** Generate a short opaque handle — 12 hex chars (48 bits of entropy). */
+/**
+ * Generate an opaque handle: 24 hex chars (96 bits). The handle is the only thing
+ * standing between a caller and an agent for 7 days, so it must not be guessable;
+ * the earlier 12-char handles (48 bits) were too short for that once many sessions
+ * are live at the same time.
+ */
 function generateHandle(): string {
-  const bytes = new Uint8Array(6);
+  const bytes = new Uint8Array(12);
   crypto.getRandomValues(bytes);
   let hex = "";
   for (const b of bytes) hex += b.toString(16).padStart(2, "0");
   return HANDLE_PREFIX + hex;
 }
 
-/** Validate that a string looks like a session handle. */
+/** Validate that a string looks like a session handle (24 hex; 12 hex for handles issued before 0.2.50, until they expire). */
 export function isSessionHandle(value: string): boolean {
-  return /^obc_[0-9a-f]{12}$/i.test(value);
+  return /^obc_(?:[0-9a-f]{12}|[0-9a-f]{24})$/i.test(value);
 }
 
 class UpstashSessionStore implements SessionStore {

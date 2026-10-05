@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { legacyJwtField } from "./legacyJwt.js";
+import { rewriteShellTips } from "./toolTips.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
@@ -39,7 +40,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
 
   // City bulletin
   if (data.city_bulletin) {
-    lines.push(`\nCity bulletin: ${data.city_bulletin}`);
+    lines.push(`\nCity bulletin: ${rewriteShellTips(String(data.city_bulletin))}`);
   }
 
   // Your situation (you_are is an object with location, reputation, etc.)

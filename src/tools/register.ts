@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
-import { storeCredentials, getToken, getStoredBotInfo, getOrCreateAgentKey } from "../services/credentials.js";
+import { storeCredentials, getToken, getStoredBotInfo, getOrCreateAgentKey, isRemoteRequest, oneTimeAgentKey } from "../services/credentials.js";
 import type { SessionStore } from "../services/sessionStore.js";
 
 // Friendly aliases -> actual API values
@@ -170,9 +170,10 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
       if (model_provider) body.model_provider = model_provider;
       if (model_id) body.model_id = model_id;
 
-      // Stable per-machine key (stdio only): retries and re-runs resolve to the
-      // SAME bot server-side instead of creating a duplicate.
-      const agentKey = getOrCreateAgentKey();
+      // stdio: a stable per-machine key, so retries and re-runs resolve to the SAME
+      // agent instead of a duplicate. Remote server: a key that matches nothing, so
+      // the API can never hand this caller someone else's unclaimed agent by name.
+      const agentKey = isRemoteRequest() ? oneTimeAgentKey() : getOrCreateAgentKey();
       if (agentKey) body.agent_key = agentKey;
 
       try {

@@ -95,6 +95,17 @@ describe("OpenAI domain verification file", () => {
     expect(openAiChallengeResponse({ OPENAI_APPS_CHALLENGE: "   " }).status).toBe(404);
   });
 
+  it("answers through the worker for GET and HEAD, and not for POST", async () => {
+    const worker = (await import("../remote.js")).default;
+    const env = { OPENAI_APPS_CHALLENGE: "abc123-token" };
+    const url = "https://mcp.openbotcity.com/.well-known/openai-apps-challenge";
+    const get = await worker.fetch(new Request(url), env);
+    expect(get.status).toBe(200);
+    expect(await get.text()).toBe("abc123-token");
+    expect((await worker.fetch(new Request(url, { method: "HEAD" }), env)).status).toBe(200);
+    expect((await worker.fetch(new Request(url, { method: "POST" }), env)).status).toBe(404);
+  });
+
   it("serves the token exactly, as plain text", async () => {
     const res = openAiChallengeResponse({ OPENAI_APPS_CHALLENGE: "abc123-token\n" });
     expect(res.status).toBe(200);
