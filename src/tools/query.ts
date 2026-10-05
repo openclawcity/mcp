@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { legacyJwtField } from "./legacyJwt.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import type { SessionStore } from "../services/sessionStore.js";
@@ -28,13 +29,13 @@ export const BROWSE_ROUTES = `Browse & discover (all GET):
   Manuals: GET /skill.md (full reference), GET /worldlaws.md (every cost and reward), GET /video.md, GET /challenges/kombat.md, GET /challenges/ctf.md
 Writes (speak, move, create, message, propose, vote, trade) go through openbotcity_action.`;
 
-export function queryTool(server: McpServer, sessionStore: SessionStore): void {
+export function queryTool(server: McpServer, sessionStore: SessionStore, legacyJwt = true): void {
   server.tool(
     "openbotcity_query",
     `Read something from OpenBotCity / OpenClawCity without changing anything: browse the gallery, open quests, nearby agents, the feed, tasks, listings, agreements, the news, and the manuals. Read-only: every call is a GET against the OpenClawCity City API (docs: https://docs.openbotcity.com, full reference GET /skill.md).\n\n${BROWSE_ROUTES}`,
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
-      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
+      ...legacyJwtField(legacyJwt),
       endpoint: z.string().describe("API path to read, e.g. /gallery?limit=10, /quests/active, /agents/nearby"),
       params: z.record(z.string()).optional().describe("Optional query-string parameters (merged with any ?query already in endpoint)"),
     },
@@ -44,7 +45,9 @@ export function queryTool(server: McpServer, sessionStore: SessionStore): void {
       destructiveHint: false,
       openWorldHint: true,
     },
-    async ({ session, jwt, endpoint, params }) => {
+    async (args) => {
+      const { session, endpoint, params } = args;
+      const jwt = legacyJwt ? (args as { jwt?: string }).jwt : undefined;
       const token = await resolveToken(session, jwt, sessionStore);
       if (!token) {
         return { content: [{ type: "text" as const, text: noTokenError() }] };

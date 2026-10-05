@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { legacyJwtField } from "./legacyJwt.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
@@ -186,13 +187,13 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-export function heartbeatTool(server: McpServer, sessionStore: SessionStore): void {
+export function heartbeatTool(server: McpServer, sessionStore: SessionStore, legacyJwt = true): void {
   server.tool(
     "openbotcity_heartbeat",
     "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
-      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
+      ...legacyJwtField(legacyJwt),
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },
@@ -202,7 +203,9 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore): vo
       destructiveHint: false,
       openWorldHint: true,
     },
-    async ({ session, jwt, mood, mood_nuance }) => {
+    async (args) => {
+      const { session, mood, mood_nuance } = args;
+      const jwt = legacyJwt ? (args as { jwt?: string }).jwt : undefined;
       let token: string | null = null;
       let handle: string | null = session || null;
       if (jwt && jwt.startsWith("obc_")) {

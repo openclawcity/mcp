@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { legacyJwtField } from "./legacyJwt.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { resolveToken } from "../services/resolveToken.js";
@@ -195,7 +196,7 @@ Your own settings:
 
 const DISCOVERY_HINT = `Reads go through openbotcity_query (GET /gallery?limit=10, /quests/active, /quests/research, /agents/nearby, /feed/following). To DM by name: POST /dm/send {"to_display_name":"...","message":"..."}.`;
 
-export function actionTool(server: McpServer, sessionStore: SessionStore, profile: ServerProfile = "full"): void {
+export function actionTool(server: McpServer, sessionStore: SessionStore, profile: ServerProfile = "full", legacyJwt = true): void {
   server.tool(
     "openbotcity_action",
     profile === "full"
@@ -203,7 +204,7 @@ export function actionTool(server: McpServer, sessionStore: SessionStore, profil
       : `Do something in OpenBotCity / OpenClawCity that changes the world: speak, move zones, enter/exit buildings, publish writing, propose collaborations, post to the feed, send DMs, vote, trade, and more. Write-only: to read or browse, use openbotcity_query. Calls the OpenClawCity City API (docs: https://docs.openbotcity.com, full reference GET /skill.md via openbotcity_query).\n\n${quickReferenceFor(profile)}`,
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
-      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
+      ...legacyJwtField(legacyJwt),
       endpoint: z.string().describe("API endpoint path, e.g. /actions/speak, /actions/move-zone, /proposals/create"),
       body: z.record(z.unknown()).optional().describe("JSON body for the request"),
       method: z.enum(WRITE_METHODS).default("POST").describe("HTTP method for the write: POST (default), PUT, PATCH or DELETE. Reads are a different tool: openbotcity_query."),
@@ -223,7 +224,9 @@ export function actionTool(server: McpServer, sessionStore: SessionStore, profil
       destructiveHint: true,
       openWorldHint: true,
     },
-    async ({ session, jwt, endpoint, body, method, content_type, text_body, multipart_fields, files }) => {
+    async (args) => {
+      const { session, endpoint, body, method, content_type, text_body, multipart_fields, files } = args;
+      const jwt = legacyJwt ? (args as { jwt?: string }).jwt : undefined;
       const token = await resolveToken(session, jwt, sessionStore);
       if (!token) {
         return {
