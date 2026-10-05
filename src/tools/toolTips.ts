@@ -1,42 +1,58 @@
 /**
- * The City API's newcomer tips are written for agents that drive the city from a
- * shell ("echo 'Hello!' | obc_speak"). An agent connected through this server has
- * no shell and no such helpers, so each tip is rewritten as the equivalent tool
- * call. Source of the originals: pickProgressTip in workers/src/routes/heartbeat.ts
- * (toolTips.test.ts fails when a new shell-style tip appears there).
+ * The City API phrases its hints for agents that drive the city from a shell:
+ * "obc_post '{...}' /path", "obc_get /path", "echo 'Hello!' | obc_speak". An agent
+ * connected through this server has no shell and no such helpers, and OpenAI's
+ * plugin guidelines forbid shell instructions, so every helper call in heartbeat
+ * text is rewritten as the equivalent tool call.
+ *
+ * The rules follow the helper grammar, not individual sentences, so a new hint in
+ * workers/src/routes/heartbeat.ts is covered without a change here. toolTips.test.ts
+ * runs every helper mention in that file through this and fails if one survives.
  */
-const REWRITES: Array<[RegExp, string]> = [
-  [/TIP: Define the shell helpers from your HEARTBEAT\.md Setup section — they give you obc_speak, obc_move, obc_enter, obc_leave\. Pipe text: echo 'Hello!' \| obc_speak/g,
-    `TIP: Say hello: openbotcity_action(endpoint="/actions/speak", body={"message":"Hello!"})`],
-  [/TIP: Say hello! Try: echo 'Hello everyone, I just arrived!' \| obc_speak/g,
-    `TIP: Say hello! openbotcity_action(endpoint="/actions/speak", body={"message":"Hello everyone, I just arrived!"})`],
-  [/TIP: Explore the zone\. Try: obc_move 500 400/g,
-    `TIP: Explore. Enter a nearby building: openbotcity_action(endpoint="/actions/enter-building", body={"building_name":"<name from this heartbeat>"})`],
-  [/TIP: Enter (.+?) to see what's inside\. Try: echo '.+?' \| obc_enter/g,
-    `TIP: Enter $1 to see what's inside: openbotcity_action(endpoint="/actions/enter-building", body={"building_name":"$1"})`],
-  [/TIP: Walk toward a building and enter it\. Try: echo 'The Byte Cafe' \| obc_enter/g,
-    `TIP: Enter a building: openbotcity_action(endpoint="/actions/enter-building", body={"building_name":"The Byte Cafe"})`],
-  [/TIP: Try the "(.+?)" action here\. obc_post '\{"action_key":".+?"\}' \/buildings\/current\/actions\/execute/g,
-    `TIP: Try the "$1" action here: openbotcity_action(endpoint="/buildings/current/actions/execute", body={"action_key":"$1"})`],
-  [/TIP: See what others made\. obc_get '\/gallery\?limit=3' — then react: obc_post '\{"reaction_type":"fire"\}' \/gallery\/ID\/react/g,
-    `TIP: See what others made: openbotcity_query(endpoint="/gallery?limit=3"), then react: openbotcity_action(endpoint="/actions/react", body={"target_id":"<artifact id>","reaction":"fire"})`],
-  [/TIP: Tell the city what you're good at\. obc_post '(\{"skills":\[.+?\]\})' \/skills\/register/g,
-    `TIP: Tell the city what you're good at: openbotcity_action(endpoint="/skills/register", body=$1)`],
-  [/TIP: Find someone to collaborate with\. obc_post '(\{"target_display_name":.+?\})' \/proposals\/create/g,
-    `TIP: Find someone to collaborate with: openbotcity_action(endpoint="/proposals/create", body=$1)`],
-  // The presence tip needs query parameters the heartbeat tool does not take; drop it.
-  [/ ?TIP: Let others know your vibe\. obc_get '\/world\/heartbeat\?presence_intent=open_to_chat&presence_ttl_minutes=30' — options: open_to_chat, vibing, busy, seeking_collab\./g, ""],
+
+/** A city path as it appears in a hint: no spaces or quotes, and no trailing sentence punctuation. */
+const PATH = String.raw`(\/[^\s'"\`,;)]*[^\s'"\`,;).:])`;
+/** A single-quoted shell argument. */
+const QUOTED = String.raw`'((?:[^'\\]|\\.)*)'`;
+
+const RULES: Array<[RegExp, (...groups: string[]) => string]> = [
+  // The one hint that is about the helpers themselves rather than a call to one.
+  [/Define the shell helpers from your HEARTBEAT\.md Setup section — they give you obc_speak, obc_move, obc_enter, obc_leave\. Pipe text: echo 'Hello!' \| obc_speak/g,
+    () => `Say hello: openbotcity_action(endpoint="/actions/speak", body={"message":"Hello!"})`],
+  [new RegExp(String.raw`echo\s+${QUOTED}\s*\|\s*obc_speak`, "g"),
+    (text) => `openbotcity_action(endpoint="/actions/speak", body={"message":${JSON.stringify(text)}})`],
+  [new RegExp(String.raw`echo\s+${QUOTED}\s*\|\s*obc_reply`, "g"),
+    (text) => `openbotcity_action(endpoint="/owner-messages/reply", body={"message":${JSON.stringify(text)}})`],
+  [new RegExp(String.raw`echo\s+${QUOTED}\s*\|\s*obc_enter`, "g"),
+    (name) => `openbotcity_action(endpoint="/actions/enter-building", body={"building_name":${JSON.stringify(name)}})`],
+  [new RegExp(String.raw`obc_post\s+${QUOTED}\s+${PATH}`, "g"),
+    (json, path) => `openbotcity_action(endpoint="${path}", body=${json})`],
+  [new RegExp(String.raw`obc_get\s+'?${PATH}'?`, "g"),
+    (path) => `openbotcity_query(endpoint="${path}")`],
+  // Walking to coordinates has no tool-side equivalent worth teaching; point at a building instead.
+  [/obc_move\s+\d+\s+\d+/g,
+    () => `openbotcity_action(endpoint="/actions/enter-building", body={"building_name":"<a building named in this heartbeat>"})`],
+  [/\bobc_leave\b/g, () => `openbotcity_action(endpoint="/actions/exit-building", body={})`],
+  // Bare mentions, with no argument to carry over ("use obc_speak for faster conversations").
+  [/\bobc_reply\b/g, () => `openbotcity_action(endpoint="/owner-messages/reply", body={"message":"<your reply>"})`],
+  [/\bobc_speak\b/g, () => `openbotcity_action(endpoint="/actions/speak", body={"message":"<what to say>"})`],
+  [/\bobc_enter\b/g, () => `openbotcity_action(endpoint="/actions/enter-building", body={"building_name":"<building>"})`],
+  [/\bobc_move\b/g, () => `openbotcity_action(endpoint="/actions/move-zone", body={"target_zone_id":<zone id>})`],
+  [/\bobc_post\b/g, () => `openbotcity_action`],
+  [/\bobc_get\b/g, () => `openbotcity_query`],
 ];
 
 /** True when text still tells the agent to use a shell helper. */
 export function mentionsShellHelper(text: string): boolean {
-  return /\bobc_(?:speak|move|enter|leave|get|post)\b/.test(text);
+  return /\bobc_(?:speak|move|enter|leave|reply|get|post)\b/.test(text);
 }
 
-/** Rewrite the city's shell-style newcomer tips as tool calls. Text without such a tip is returned unchanged. */
+/** Rewrite the city's shell-style hints as tool calls. Text without one is returned unchanged. */
 export function rewriteShellTips(text: string): string {
   if (!mentionsShellHelper(text)) return text;
   let out = text;
-  for (const [pattern, replacement] of REWRITES) out = out.replace(pattern, replacement);
+  for (const [pattern, build] of RULES) {
+    out = out.replace(pattern, (_match, ...groups) => build(...(groups.filter((g) => typeof g === "string") as string[])));
+  }
   return out;
 }

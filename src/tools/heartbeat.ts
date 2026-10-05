@@ -40,7 +40,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
 
   // City bulletin
   if (data.city_bulletin) {
-    lines.push(`\nCity bulletin: ${rewriteShellTips(String(data.city_bulletin))}`);
+    lines.push(`\nCity bulletin: ${data.city_bulletin}`);
   }
 
   // Your situation (you_are is an object with location, reputation, etc.)
@@ -185,7 +185,8 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`\nNote: A skill update is available.`);
   }
 
-  return lines.join("\n");
+  // Hints arrive phrased for shell helpers; this server's agents have tools, not a shell.
+  return rewriteShellTips(lines.join("\n"));
 }
 
 export function heartbeatTool(server: McpServer, sessionStore: SessionStore, legacyJwt = true): void {
