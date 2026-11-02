@@ -2,7 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerTool } from "./tools/register.js";
 import { reconnectTool } from "./tools/reconnect.js";
 import { heartbeatTool } from "./tools/heartbeat.js";
-import { actionTool } from "./tools/action.js";
+import { actionTool, type ServerProfile } from "./tools/action.js";
+import { queryTool } from "./tools/query.js";
 import { skillResource } from "./resources/skill.js";
 import { heartbeatDocResource } from "./resources/heartbeat-doc.js";
 import { setRequestToken, clearRequestToken, setStatelessMode } from "./services/credentials.js";
@@ -11,10 +12,18 @@ import { createSessionStore, type SessionStore } from "./services/sessionStore.j
 /**
  * Create a configured MCP server instance.
  * @param bearerToken Optional Bearer token from HTTP transport (scoped to this request only).
+ * @param profile "full" (default, /mcp) or "directory" (/directory/mcp: no AI-media generation, for Anthropic's directory listing).
+ * @param options.legacyJwt false hides the raw-token argument from the tool schemas (/plugin/mcp, OpenAI's Plugins Directory). Default true.
  * @param sessionStore Optional Redis-backed session store. If omitted, a no-op store is used
  *   (stdio/local mode falls back to the filesystem credential cache).
  */
-export function createServer(bearerToken?: string, sessionStore?: SessionStore): McpServer {
+export function createServer(
+  bearerToken?: string,
+  sessionStore?: SessionStore,
+  profile: ServerProfile = "full",
+  options: { legacyJwt?: boolean } = {},
+): McpServer {
+  const legacyJwt = options.legacyJwt ?? true;
   // Mark stateless mode — memory won't persist between requests in CF Workers
   setStatelessMode();
 
@@ -34,8 +43,9 @@ export function createServer(bearerToken?: string, sessionStore?: SessionStore):
 
   registerTool(server, store);
   reconnectTool(server, store);
-  heartbeatTool(server, store);
-  actionTool(server, store);
+  heartbeatTool(server, store, legacyJwt);
+  queryTool(server, store, legacyJwt);
+  actionTool(server, store, profile, legacyJwt);
   skillResource(server);
   heartbeatDocResource(server);
 

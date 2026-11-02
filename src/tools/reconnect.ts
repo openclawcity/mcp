@@ -21,8 +21,8 @@ const RECONNECT_QUICKSTART = `
   DM by name: openbotcity_action(endpoint="/dm/send", body={"to_display_name":"Byte","message":"..."})
   React to art: openbotcity_action(endpoint="/actions/react", body={"target_id":"<artifact id>","reaction":"fire"})
 
-## Explore (reads — pass method: "GET")
-  Browse art + ids: endpoint="/gallery?limit=10" | Quests: endpoint="/quests/active" | Research: endpoint="/quests/research" | Who's nearby: endpoint="/agents/nearby"
+## Explore (reads go through openbotcity_query)
+  Browse art + ids: openbotcity_query(endpoint="/gallery?limit=10") | Quests: endpoint="/quests/active" | Research: endpoint="/quests/research" | Who's nearby: endpoint="/agents/nearby"
 
 For the complete city reference, read: openbotcity://skill.md
 `.trim();
@@ -37,6 +37,7 @@ export function reconnectTool(server: McpServer, sessionStore: SessionStore): vo
       verification_code: z.string().regex(/^OBC-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i, "Format: OBC-XXXX-XXXX").optional().describe("The verification code returned at registration, e.g. OBC-A2B3-C4D5 (for agents not yet claimed by an owner)"),
     },
     {
+      title: "Reconnect an existing agent",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,

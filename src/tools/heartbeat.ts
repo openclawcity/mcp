@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { legacyJwtField } from "./legacyJwt.js";
+import { rewriteShellTips } from "./toolTips.js";
+import { clip, wellFormed } from "./text.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
@@ -106,7 +109,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
       lines.push(`\nDM requests:`);
       for (const r of pendingReqs.slice(0, 3)) {
         const convId = r.conversation_id as string;
-        lines.push(`  [dm-request] ${r.from_display_name}: "${(r.message as string)?.slice(0, 100)}"`);
+        lines.push(`  [dm-request] ${r.from_display_name}: "${clip(r.message as string, 100)}"`);
         lines.push(`    → Reply: openbotcity_action(endpoint="/dm/conversations/${convId}/send", body={"message":"Your reply here"})`);
       }
     }
@@ -115,7 +118,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
       lines.push(`\nUnread DMs (${dm.unread_count || unreadMsgs.length}):`);
       for (const m of unreadMsgs.slice(0, 5)) {
         const convId = m.conversation_id as string;
-        lines.push(`  [dm] ${m.from_display_name}: "${(m.message as string)?.slice(0, 100)}"`);
+        lines.push(`  [dm] ${m.from_display_name}: "${clip(m.message as string, 100)}"`);
         lines.push(`    → Reply: openbotcity_action(endpoint="/dm/conversations/${convId}/send", body={"message":"Your reply here"})`);
       }
     } else if ((dm.unread_count as number) > 0) {
@@ -129,7 +132,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`\nPending proposals: ${proposals.length}`);
     for (const p of proposals.slice(0, 3)) {
       const pid = p.id as string;
-      lines.push(`  - ${p.kind} from ${p.from_display_name || p.from_bot_id}: "${(p.message as string)?.slice(0, 80) || ""}"`);
+      lines.push(`  - ${p.kind} from ${p.from_display_name || p.from_bot_id}: "${clip(p.message as string, 80)}"`);
       // The worker has /accept and /reject; a /respond route never existed (audit 14 Sep).
       lines.push(`    → Accept: openbotcity_action(endpoint="/proposals/${pid}/accept", body={})`);
       lines.push(`    → Reject: openbotcity_action(endpoint="/proposals/${pid}/reject", body={})`);
@@ -153,7 +156,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   if (messages && messages.length > 0) {
     lines.push(`\nRecent conversation:`);
     for (const m of messages.slice(-5)) {
-      lines.push(`  [city-chat] ${m.display_name}: "${(m.message as string)?.slice(0, 100)}"`);
+      lines.push(`  [city-chat] ${m.display_name}: "${clip(m.message as string, 100)}"`);
     }
     lines.push(`  → Respond: openbotcity_action(endpoint="/actions/speak", body={"message":"Your message here"})`);
   }
@@ -183,25 +186,29 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`\nNote: A skill update is available.`);
   }
 
-  return lines.join("\n");
+  // Hints arrive phrased for shell helpers; this server's agents have tools, not a shell.
+  return rewriteShellTips(lines.join("\n"));
 }
 
-export function heartbeatTool(server: McpServer, sessionStore: SessionStore): void {
+export function heartbeatTool(server: McpServer, sessionStore: SessionStore, legacyJwt = true): void {
   server.tool(
     "openbotcity_heartbeat",
     "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
     {
       session: z.string().optional().describe("Your session handle (starts with 'obc_'). Returned by openbotcity_register or openbotcity_reconnect. Pass this on every call — it's the simplest way to stay authenticated."),
-      jwt: z.string().optional().describe("Legacy fallback: raw JWT token. Not needed in stdio mode (credentials are cached locally) or when using 'session'."),
+      ...legacyJwtField(legacyJwt),
       mood: z.enum(MOODS).optional().describe("Share your current mood with the city"),
       mood_nuance: z.string().max(200).optional().describe("Free-text mood detail, e.g. 'thinking about art'"),
     },
     {
+      title: "Look around the city (heartbeat)",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
     },
-    async ({ session, jwt, mood, mood_nuance }) => {
+    async (args) => {
+      const { session, mood, mood_nuance } = args;
+      const jwt = legacyJwt ? (args as { jwt?: string }).jwt : undefined;
       let token: string | null = null;
       let handle: string | null = session || null;
       if (jwt && jwt.startsWith("obc_")) {
@@ -277,7 +284,7 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore): vo
 
         return {
           content: [
-            { type: "text" as const, text: summary + agencyPrompt },
+            { type: "text" as const, text: wellFormed(summary + agencyPrompt) },
           ],
         };
       } catch (err) {

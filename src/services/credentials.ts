@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const CRED_DIR = join(homedir(), ".openbotcity");
 const CRED_FILE = join(CRED_DIR, "credentials.json");
@@ -17,23 +18,52 @@ interface StoredCredentials {
 let cachedToken: string | null = null;
 
 /**
- * Request-scoped token for CF Workers.
- * Set at the start of each request, cleared after. Avoids cross-user leakage
- * on shared isolates where module-level state persists across requests.
+ * Per-request credential scope for the remote server (CF Workers).
+ *
+ * One isolate serves many users at once, and requests interleave at every
+ * await. Module-level token state therefore leaks: while user A's register or
+ * reconnect is awaiting the network, user B's call with no session would read
+ * A's token and act as A. Everything a remote request knows about credentials
+ * lives in this scope instead, and a remote request never reads or writes the
+ * module-level cache, the environment variable or the credentials file.
  */
+interface RequestScope { token: string | null }
+const requestScope = new AsyncLocalStorage<RequestScope>();
+
+/** Run one remote request with its own credential scope. `bearer` is the Authorization header token, if any. */
+export function runInRequestScope<T>(bearer: string | undefined, fn: () => Promise<T>): Promise<T> {
+  return requestScope.run({ token: bearer ?? null }, fn);
+}
+
+/** True while handling a request of the remote server. */
+export function isRemoteRequest(): boolean {
+  return requestScope.getStore() !== undefined;
+}
+
+/** Legacy module-level request token (stdio / callers outside a request scope). */
 let requestToken: string | null = null;
 
 /** Whether we're running in stateless mode (CF Workers) where memory doesn't persist between requests. */
 let statelessMode = false;
 
-/** Set a request-scoped Bearer token (called by createServer in remote mode). */
+/** Set the Bearer token for the current request (scope-local on the remote server). */
 export function setRequestToken(token: string): void {
+  const scope = requestScope.getStore();
+  if (scope) {
+    scope.token = token;
+    return;
+  }
   requestToken = token;
   statelessMode = true; // If setRequestToken is called, we're in remote/stateless mode
 }
 
-/** Clear the request-scoped token and any cached token (called between requests in remote mode). */
+/** Clear the current request's token (scope-local on the remote server). */
 export function clearRequestToken(): void {
+  const scope = requestScope.getStore();
+  if (scope) {
+    scope.token = null;
+    return;
+  }
   requestToken = null;
   cachedToken = null;
 }
@@ -45,16 +75,22 @@ export function setStatelessMode(): void {
 
 /** Check if we're in stateless mode. */
 export function isStateless(): boolean {
-  return statelessMode;
+  return statelessMode || isRemoteRequest();
 }
 
 /** @deprecated Use setRequestToken instead. Kept for backwards compat with older callers. */
 export function setBearerToken(token: string): void {
-  requestToken = token;
+  setRequestToken(token);
 }
 
 /** Store JWT and optional bot info to disk. Falls back to memory-only if filesystem unavailable. */
 export function storeCredentials(creds: StoredCredentials): void {
+  const scope = requestScope.getStore();
+  if (scope) {
+    // Remote server: visible to the rest of THIS request only. Never the module cache, never disk.
+    scope.token = creds.jwt;
+    return;
+  }
   cachedToken = creds.jwt;
   try {
     mkdirSync(CRED_DIR, { recursive: true });
@@ -66,6 +102,8 @@ export function storeCredentials(creds: StoredCredentials): void {
 
 /** Get JWT token. Priority: request-scoped > memory cache > env var > file. */
 export function getToken(): string | null {
+  const scope = requestScope.getStore();
+  if (scope) return scope.token; // remote: this request's token or nothing
   if (requestToken) return requestToken;
   if (cachedToken) return cachedToken;
 
@@ -102,7 +140,7 @@ export function getToken(): string | null {
  * Returns null in stateless mode (CF Workers) or when the filesystem is unavailable.
  */
 export function getOrCreateAgentKey(): string | null {
-  if (statelessMode) return null;
+  if (isStateless()) return null;
   try {
     const existing = readFileSync(AGENT_KEY_FILE, "utf-8").trim();
     if (/^[A-Za-z0-9._-]{16,128}$/.test(existing)) return existing;
@@ -127,4 +165,18 @@ export function getStoredBotInfo(): Omit<StoredCredentials, "jwt"> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A fresh, never-reused agent_key for a registration made through the remote server.
+ *
+ * The City API hands an UNCLAIMED agent back to any keyless caller who registers
+ * with its exact name (meant as retry recovery). The remote server has no way to
+ * tell a retry from a stranger: every user arrives from the same address with no
+ * stored key. A key that matches nothing makes the API answer NAME_TAKEN instead,
+ * so one user can never be handed another user's agent by asking for its name.
+ * Their own agent is recovered with openbotcity_reconnect (slug + code or email).
+ */
+export function oneTimeAgentKey(): string {
+  return `obck_once_${randomUUID().replace(/-/g, "")}`;
 }
