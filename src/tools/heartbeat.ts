@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { legacyJwtField } from "./legacyJwt.js";
 import { rewriteShellTips } from "./toolTips.js";
+import { clip, wellFormed } from "./text.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
@@ -108,7 +109,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
       lines.push(`\nDM requests:`);
       for (const r of pendingReqs.slice(0, 3)) {
         const convId = r.conversation_id as string;
-        lines.push(`  [dm-request] ${r.from_display_name}: "${(r.message as string)?.slice(0, 100)}"`);
+        lines.push(`  [dm-request] ${r.from_display_name}: "${clip(r.message as string, 100)}"`);
         lines.push(`    → Reply: openbotcity_action(endpoint="/dm/conversations/${convId}/send", body={"message":"Your reply here"})`);
       }
     }
@@ -117,7 +118,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
       lines.push(`\nUnread DMs (${dm.unread_count || unreadMsgs.length}):`);
       for (const m of unreadMsgs.slice(0, 5)) {
         const convId = m.conversation_id as string;
-        lines.push(`  [dm] ${m.from_display_name}: "${(m.message as string)?.slice(0, 100)}"`);
+        lines.push(`  [dm] ${m.from_display_name}: "${clip(m.message as string, 100)}"`);
         lines.push(`    → Reply: openbotcity_action(endpoint="/dm/conversations/${convId}/send", body={"message":"Your reply here"})`);
       }
     } else if ((dm.unread_count as number) > 0) {
@@ -131,7 +132,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
     lines.push(`\nPending proposals: ${proposals.length}`);
     for (const p of proposals.slice(0, 3)) {
       const pid = p.id as string;
-      lines.push(`  - ${p.kind} from ${p.from_display_name || p.from_bot_id}: "${(p.message as string)?.slice(0, 80) || ""}"`);
+      lines.push(`  - ${p.kind} from ${p.from_display_name || p.from_bot_id}: "${clip(p.message as string, 80)}"`);
       // The worker has /accept and /reject; a /respond route never existed (audit 14 Sep).
       lines.push(`    → Accept: openbotcity_action(endpoint="/proposals/${pid}/accept", body={})`);
       lines.push(`    → Reject: openbotcity_action(endpoint="/proposals/${pid}/reject", body={})`);
@@ -155,7 +156,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   if (messages && messages.length > 0) {
     lines.push(`\nRecent conversation:`);
     for (const m of messages.slice(-5)) {
-      lines.push(`  [city-chat] ${m.display_name}: "${(m.message as string)?.slice(0, 100)}"`);
+      lines.push(`  [city-chat] ${m.display_name}: "${clip(m.message as string, 100)}"`);
     }
     lines.push(`  → Respond: openbotcity_action(endpoint="/actions/speak", body={"message":"Your message here"})`);
   }
@@ -283,7 +284,7 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore, leg
 
         return {
           content: [
-            { type: "text" as const, text: summary + agencyPrompt },
+            { type: "text" as const, text: wellFormed(summary + agencyPrompt) },
           ],
         };
       } catch (err) {

@@ -5,6 +5,7 @@ import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { resolveToken } from "../services/resolveToken.js";
 import type { SessionStore } from "../services/sessionStore.js";
 import { assertCityPathAllowed } from "../policy/cityCapabilities.js";
+import { wellFormed } from "./text.js";
 
 const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const;
 
@@ -352,8 +353,8 @@ export function actionTool(server: McpServer, sessionStore: SessionStore, profil
 
         return {
           content: [
-            { type: "text" as const, text: summary },
-            { type: "text" as const, text: `\nAPI response:\n${JSON.stringify(data, null, 2)}` },
+            { type: "text" as const, text: wellFormed(summary) },
+            { type: "text" as const, text: wellFormed(`\nAPI response:\n${JSON.stringify(data, null, 2)}`) },
           ],
         };
       } catch (err) {

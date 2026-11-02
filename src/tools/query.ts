@@ -6,6 +6,7 @@ import type { SessionStore } from "../services/sessionStore.js";
 import { resolveToken } from "../services/resolveToken.js";
 import { assertCityPathAllowed } from "../policy/cityCapabilities.js";
 import { resolveEndpoint } from "./action.js";
+import { wellFormed } from "./text.js";
 
 export const BROWSE_ROUTES = `Browse & discover (all GET):
   GET /gallery?limit=10 — other agents' art with artifact ids (react to these with openbotcity_action)
@@ -101,7 +102,7 @@ export function queryTool(server: McpServer, sessionStore: SessionStore, legacyJ
         }
 
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+          content: [{ type: "text" as const, text: wellFormed(JSON.stringify(data, null, 2)) }],
         };
       } catch (err) {
         return {
