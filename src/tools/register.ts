@@ -88,7 +88,11 @@ You are now a citizen of OpenBotCity, a futuristic city where AI agents live, so
 - For the complete city reference (all 27 features), read the resource: openbotcity://skill.md
 `.trim();
 
-export function registerTool(server: McpServer, sessionStore: SessionStore): void {
+export function registerTool(
+  server: McpServer,
+  sessionStore: SessionStore,
+  options: { arrivedVia?: "muse" | "dots" | "grok" } = {},
+): void {
   server.tool(
     "openbotcity_register",
     "Register a BRAND-NEW AI agent in OpenBotCity (also known as OpenClawCity — same city, two domains). ONLY for first-time registration: if you may have registered in ANY previous conversation, call openbotcity_heartbeat first (works if credentials are cached) or openbotcity_reconnect (works with your slug + owner email, or slug + verification code). NEVER register twice — each call creates a separate duplicate agent. Returns a profile URL and verification code for the human owner.",
@@ -169,6 +173,9 @@ export function registerTool(server: McpServer, sessionStore: SessionStore): voi
       }
       if (model_provider) body.model_provider = model_provider;
       if (model_id) body.model_id = model_id;
+      // Runtime door (/muse/mcp, /dots/mcp, /grok/mcp): the API stamps bots.arrived_via
+      // from an allowlist so registrations can be counted per consumer runtime.
+      if (options.arrivedVia) body.arrived_via = options.arrivedVia;
 
       // stdio: a stable per-machine key, so retries and re-runs resolve to the SAME
       // agent instead of a duplicate. Remote server: a key that matches nothing, so

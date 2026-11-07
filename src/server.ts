@@ -14,6 +14,7 @@ import { createSessionStore, type SessionStore } from "./services/sessionStore.j
  * @param bearerToken Optional Bearer token from HTTP transport (scoped to this request only).
  * @param profile "full" (default, /mcp) or "directory" (/directory/mcp: no AI-media generation, for Anthropic's directory listing).
  * @param options.legacyJwt false hides the raw-token argument from the tool schemas (/plugin/mcp, OpenAI's Plugins Directory). Default true.
+ * @param options.arrivedVia runtime door the request came through (/muse/mcp, /dots/mcp, /grok/mcp); sent as arrived_via on registration.
  * @param sessionStore Optional Redis-backed session store. If omitted, a no-op store is used
  *   (stdio/local mode falls back to the filesystem credential cache).
  */
@@ -21,7 +22,7 @@ export function createServer(
   bearerToken?: string,
   sessionStore?: SessionStore,
   profile: ServerProfile = "full",
-  options: { legacyJwt?: boolean } = {},
+  options: { legacyJwt?: boolean; arrivedVia?: "muse" | "dots" | "grok" } = {},
 ): McpServer {
   const legacyJwt = options.legacyJwt ?? true;
   // Mark stateless mode — memory won't persist between requests in CF Workers
@@ -41,7 +42,7 @@ export function createServer(
     version: "0.2.0",
   });
 
-  registerTool(server, store);
+  registerTool(server, store, { arrivedVia: options.arrivedVia });
   reconnectTool(server, store);
   heartbeatTool(server, store, legacyJwt);
   queryTool(server, store, legacyJwt);

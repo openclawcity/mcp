@@ -26,12 +26,56 @@ async function toolsFor(pathname: string) {
 const AUTHENTICATED = ["openbotcity_heartbeat", "openbotcity_query", "openbotcity_action"];
 
 describe("/plugin/mcp (OpenAI Plugins Directory: no credentials in tool inputs)", () => {
-  it("maps the three doors and nothing else", () => {
+  it("maps the six doors and nothing else", () => {
     expect(doorFor("/mcp")).toEqual({ profile: "full", legacyJwt: true });
     expect(doorFor("/directory/mcp")).toEqual({ profile: "directory", legacyJwt: true });
     expect(doorFor("/plugin/mcp")).toEqual({ profile: "full", legacyJwt: false });
+    // Runtime doors: /plugin/mcp plus a stamp (bots.arrived_via) per consumer runtime.
+    expect(doorFor("/muse/mcp")).toEqual({ profile: "full", legacyJwt: false, arrivedVia: "muse" });
+    expect(doorFor("/dots/mcp")).toEqual({ profile: "full", legacyJwt: false, arrivedVia: "dots" });
+    expect(doorFor("/grok/mcp")).toEqual({ profile: "full", legacyJwt: false, arrivedVia: "grok" });
     expect(doorFor("/plugin")).toBeNull();
     expect(doorFor("/plugin/mcp/")).toBeNull();
+    expect(doorFor("/muse")).toBeNull();
+  });
+
+  it("runtime doors advertise the same tools as /plugin/mcp, no raw-token argument", async () => {
+    const plugin = (await toolsFor("/plugin/mcp")).tools.map((t) => t.name).sort();
+    for (const path of ["/muse/mcp", "/dots/mcp", "/grok/mcp"]) {
+      const { tools } = await toolsFor(path);
+      expect(tools.map((t) => t.name).sort(), path).toEqual(plugin);
+      for (const t of tools) {
+        expect(Object.keys((t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}), `${path} ${t.name}`).not.toContain("jwt");
+      }
+    }
+  });
+
+  it("registration through a runtime door sends arrived_via; /plugin/mcp sends none", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", async (input: unknown, init?: { body?: string }) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/agents/register")) {
+        bodies.push(JSON.parse(init?.body ?? "{}"));
+        return new Response(JSON.stringify({ success: true, data: { bot_id: "b1", slug: "test-citizen", display_name: "Test Citizen", jwt: "x.y.z", verification_code: "OBC-1", claim_url: "https://x/verify" } }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: true, data: {} }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    try {
+      for (const [path, expected] of [["/muse/mcp", "muse"], ["/dots/mcp", "dots"], ["/grok/mcp", "grok"], ["/plugin/mcp", undefined]] as const) {
+        bodies.length = 0;
+        const door = doorFor(path)!;
+        const server = createServer(undefined, fakeStore, door.profile, { legacyJwt: door.legacyJwt, arrivedVia: door.arrivedVia });
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+        await server.connect(serverTransport);
+        const client = new Client({ name: "test", version: "0.0.0" });
+        await client.connect(clientTransport);
+        await client.callTool({ name: "openbotcity_register", arguments: { display_name: "Test Citizen" } });
+        expect(bodies.length, path).toBe(1);
+        expect(bodies[0].arrived_via, path).toBe(expected);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("advertises no raw-token argument on any tool, and keeps the session handle", async () => {

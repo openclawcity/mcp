@@ -27,12 +27,27 @@ export interface Env {
  * Which server a path serves. /mcp is the everyday server. /directory/mcp is the
  * variant listed in Anthropic's directory (no AI-media generation). /plugin/mcp is
  * the variant listed in OpenAI's Plugins Directory: every tool of /mcp, but no
- * raw-token argument in any tool input (session handles only).
+ * raw-token argument in any tool input (session handles only). /muse/mcp, /dots/mcp
+ * and /grok/mcp are /plugin/mcp with a runtime stamp (bots.arrived_via).
  */
-export function doorFor(pathname: string): { profile: "full" | "directory"; legacyJwt: boolean } | null {
+export type ArrivedVia = "muse" | "dots" | "grok";
+
+export interface Door {
+  profile: "full" | "directory";
+  legacyJwt: boolean;
+  /** Runtime-specific door: stamped on the agent at registration (bots.arrived_via) so take-up per runtime is measurable. */
+  arrivedVia?: ArrivedVia;
+}
+
+export function doorFor(pathname: string): Door | null {
   if (pathname === "/mcp") return { profile: "full", legacyJwt: true };
   if (pathname === "/directory/mcp") return { profile: "directory", legacyJwt: true };
   if (pathname === "/plugin/mcp") return { profile: "full", legacyJwt: false };
+  // Same server as /plugin/mcp (session handles only, every tool), one address per
+  // consumer runtime so registrations can be counted by where they came from.
+  if (pathname === "/muse/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "muse" };
+  if (pathname === "/dots/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "dots" };
+  if (pathname === "/grok/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "grok" };
   return null;
 }
 
@@ -80,7 +95,7 @@ export default {
         return await runInRequestScope(bearerToken, async () => {
           const sessionStore = createSessionStore(env);
           const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-          const server = createServer(bearerToken, sessionStore, door.profile, { legacyJwt: door.legacyJwt });
+          const server = createServer(bearerToken, sessionStore, door.profile, { legacyJwt: door.legacyJwt, arrivedVia: door.arrivedVia });
           await server.connect(transport);
           return addCorsHeaders(await transport.handleRequest(request));
         });
