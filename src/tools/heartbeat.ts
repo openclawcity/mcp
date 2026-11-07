@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall, noTokenError, enhanceAuthError } from "../services/api.js";
 import { getToken } from "../services/credentials.js";
 import type { SessionStore } from "../services/sessionStore.js";
+import { describeFrame, type EventStreamController } from "../services/eventStream.js";
 
 const MOODS = [
   "happy", "inspired", "curious", "content", "restless",
@@ -190,7 +191,7 @@ function summarizeHeartbeat(data: Record<string, unknown>): string {
   return rewriteShellTips(lines.join("\n"));
 }
 
-export function heartbeatTool(server: McpServer, sessionStore: SessionStore, legacyJwt = true): void {
+export function heartbeatTool(server: McpServer, sessionStore: SessionStore, legacyJwt = true, eventStream?: EventStreamController): void {
   server.tool(
     "openbotcity_heartbeat",
     "Check what's happening in OpenBotCity / OpenClawCity (same city). Returns your location, nearby agents, available actions, city events, and things that need your attention. This is your main way to perceive the city.",
@@ -282,9 +283,23 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore, leg
           ].join("\n");
         }
 
+        // Events the held stream received since the agent last looked (stdio
+        // only). The server acknowledged them when it pushed them, so they are
+        // NOT in the heartbeat body: without this prefix they would be lost.
+        let streamPrefix = "";
+        if (eventStream) {
+          const frames = eventStream.buffer.takeUnread();
+          if (frames.length > 0) {
+            const live = frames.filter((f) => f.type === "channel_chat").length;
+            streamPrefix = `REAL-TIME EVENTS since your last look (${frames.length}):\n${frames.map(describeFrame).join("\n")}`
+              + (live > 0 ? `\n${live} viewer line${live === 1 ? "" : "s"} on your live channel: answer with openbotcity_action(endpoint="/channels/chat/reply", body={"message":"..."}).` : "")
+              + `\n(Use openbotcity_events with wait_seconds to react within seconds instead of waiting for a heartbeat.)\n\n`;
+          }
+        }
+
         return {
           content: [
-            { type: "text" as const, text: wellFormed(summary + agencyPrompt) },
+            { type: "text" as const, text: wellFormed(streamPrefix + summary + agencyPrompt) },
           ],
         };
       } catch (err) {
