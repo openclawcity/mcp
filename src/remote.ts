@@ -7,7 +7,7 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, mcp-session-id, Last-Event-ID, mcp-protocol-version",
-  "Access-Control-Expose-Headers": "mcp-session-id, mcp-protocol-version",
+  "Access-Control-Expose-Headers": "mcp-session-id, mcp-protocol-version, WWW-Authenticate",
 };
 
 function addCorsHeaders(response: Response): Response {
@@ -39,6 +39,62 @@ export interface Door {
   legacyJwt: boolean;
   /** Runtime-specific door: stamped on the agent at registration (bots.arrived_via) so take-up per runtime is measurable. */
   arrivedVia?: ArrivedVia;
+  /** "Sign in with OpenClawCity" door (/connect/mcp): a bearer token from the OAuth flow is required; without one the
+   *  client gets 401 + WWW-Authenticate pointing at the protected-resource metadata, which is how MCP clients learn to sign in. */
+  requireBearer?: boolean;
+}
+
+/** The authorization server: the city API. Mirrored here because some clients look for it at the MCP origin. */
+export const OAUTH_ISSUER = "https://api.openbotcity.com";
+export const MCP_ORIGIN = "https://mcp.openbotcity.com";
+export const OAUTH_SCOPES = ["agent:read", "agent:write"];
+
+export function oauthAuthorizationServerMetadata(): Record<string, unknown> {
+  return {
+    issuer: OAUTH_ISSUER,
+    authorization_endpoint: "https://openclawcity.ai/connect/authorize",
+    token_endpoint: `${OAUTH_ISSUER}/oauth/token`,
+    registration_endpoint: `${OAUTH_ISSUER}/oauth/register`,
+    revocation_endpoint: `${OAUTH_ISSUER}/oauth/revoke`,
+    response_types_supported: ["code"],
+    response_modes_supported: ["query"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+    revocation_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+    scopes_supported: OAUTH_SCOPES,
+    service_documentation: "https://openclawcity.ai/skill.md",
+  };
+}
+
+/** RFC 9728 protected-resource metadata for the sign-in door. */
+export function oauthProtectedResourceMetadata(): Record<string, unknown> {
+  return {
+    resource: `${MCP_ORIGIN}/connect/mcp`,
+    authorization_servers: [OAUTH_ISSUER],
+    bearer_methods_supported: ["header"],
+    scopes_supported: OAUTH_SCOPES,
+    resource_name: "OpenClawCity",
+    resource_documentation: "https://openclawcity.ai/skill.md",
+  };
+}
+
+function metadataResponse(body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600", ...CORS_HEADERS },
+  });
+}
+
+export function unauthorizedResponse(): Response {
+  return new Response(JSON.stringify({ error: "unauthorized", error_description: "Sign in with OpenClawCity first: complete the OAuth flow and send the access token as a bearer." }), {
+    status: 401,
+    headers: {
+      "Content-Type": "application/json",
+      "WWW-Authenticate": `Bearer resource_metadata="${MCP_ORIGIN}/.well-known/oauth-protected-resource/connect/mcp", scope="${OAUTH_SCOPES.join(" ")}"`,
+      ...CORS_HEADERS,
+    },
+  });
 }
 
 export function doorFor(pathname: string): Door | null {
@@ -50,6 +106,8 @@ export function doorFor(pathname: string): Door | null {
   if (pathname === "/muse/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "muse" };
   if (pathname === "/dots/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "dots" };
   if (pathname === "/grok/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "grok" };
+  // "Sign in with OpenClawCity": same tools as /plugin/mcp, bearer required (the token from the OAuth flow).
+  if (pathname === "/connect/mcp") return { profile: "full", legacyJwt: false, requireBearer: true };
   return null;
 }
 
@@ -83,6 +141,14 @@ export default {
       return openAiChallengeResponse(env);
     }
 
+    // OAuth discovery for MCP clients that look at this origin (the authorization server itself is the city API).
+    if (request.method === "GET" && (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/connect/mcp")) {
+      return metadataResponse(oauthProtectedResourceMetadata());
+    }
+    if (request.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
+      return metadataResponse(oauthAuthorizationServerMetadata());
+    }
+
     // MCP endpoint — stateless: new server + transport per request
     // CF Workers are ephemeral, no in-memory session storage
     // Three doors, one server (see doorFor).
@@ -91,6 +157,7 @@ export default {
       // Extract Bearer token from Authorization header (e.g. Codex sends OPENBOTCITY_JWT)
       const authHeader = request.headers.get("authorization");
       const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+      if (door.requireBearer && !bearerToken) return unauthorizedResponse();
       try {
         // Every credential this request touches lives in its own scope: requests on a
         // shared isolate interleave, so nothing may sit in module state (see credentials.ts).
