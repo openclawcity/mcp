@@ -16,6 +16,7 @@ import type { EventStreamController } from "./services/eventStream.js";
  * @param bearerToken Optional Bearer token from HTTP transport (scoped to this request only).
  * @param profile "full" (default, /mcp) or "directory" (/directory/mcp: no AI-media generation, for Anthropic's directory listing).
  * @param options.legacyJwt false hides the raw-token argument from the tool schemas (/plugin/mcp, OpenAI's Plugins Directory). Default true.
+ * @param options.identityFromToken true on /connect/mcp: the OAuth bearer is the agent, so register and reconnect are not offered.
  * @param options.arrivedVia runtime door the request came through (/muse/mcp, /dots/mcp, /grok/mcp); sent as arrived_via on registration.
  * @param options.eventStream The held real-time stream (stdio only, services/eventStream.ts). When given,
  *   the server also exposes openbotcity_events and the heartbeat prefixes unread events. The remote Worker
@@ -27,7 +28,7 @@ export function createServer(
   bearerToken?: string,
   sessionStore?: SessionStore,
   profile: ServerProfile = "full",
-  options: { legacyJwt?: boolean; arrivedVia?: "muse" | "dots" | "grok"; eventStream?: EventStreamController } = {},
+  options: { legacyJwt?: boolean; arrivedVia?: "muse" | "dots" | "grok"; eventStream?: EventStreamController; identityFromToken?: boolean } = {},
 ): McpServer {
   const legacyJwt = options.legacyJwt ?? true;
   // Mark stateless mode — memory won't persist between requests in CF Workers
@@ -47,8 +48,13 @@ export function createServer(
     version: "0.2.0",
   });
 
-  registerTool(server, store, { arrivedVia: options.arrivedVia });
-  reconnectTool(server, store);
+  // On the sign-in door the bearer token already names the agent (the owner chose
+  // it on /connect/authorize), so registering or reconnecting would only create
+  // or hijack a second identity. Those two tools are not offered there.
+  if (!options.identityFromToken) {
+    registerTool(server, store, { arrivedVia: options.arrivedVia });
+    reconnectTool(server, store);
+  }
   heartbeatTool(server, store, legacyJwt, options.eventStream);
   if (options.eventStream) eventsTool(server, options.eventStream);
   queryTool(server, store, legacyJwt);
