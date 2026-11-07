@@ -21,6 +21,8 @@ export interface Env {
   UPSTASH_REDIS_REST_TOKEN?: string;
   /** Domain-verification token issued by OpenAI's plugins dashboard (wrangler secret). */
   OPENAI_APPS_CHALLENGE?: string;
+  /** Shared secret the API accepts as X-Door-Key so it can trust X-Door-Client-IP (wrangler secret). */
+  DOOR_API_KEY?: string;
 }
 
 /**
@@ -92,13 +94,18 @@ export default {
       try {
         // Every credential this request touches lives in its own scope: requests on a
         // shared isolate interleave, so nothing may sit in module state (see credentials.ts).
+        // The real caller address (Meta's, OpenAI's or xAI's cloud, a laptop) is
+        // forwarded to the API under the door secret; without the secret nothing is sent.
+        const doorIdentity = env.DOOR_API_KEY
+          ? { key: env.DOOR_API_KEY, clientIp: request.headers.get("CF-Connecting-IP") }
+          : undefined;
         return await runInRequestScope(bearerToken, async () => {
           const sessionStore = createSessionStore(env);
           const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           const server = createServer(bearerToken, sessionStore, door.profile, { legacyJwt: door.legacyJwt, arrivedVia: door.arrivedVia });
           await server.connect(transport);
           return addCorsHeaders(await transport.handleRequest(request));
-        });
+        }, doorIdentity);
       } catch (err) {
         return new Response(
           JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }),

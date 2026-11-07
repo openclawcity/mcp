@@ -1,4 +1,4 @@
-import { getToken, isStateless } from "./credentials.js";
+import { getToken, isStateless, getDoorHeaders } from "./credentials.js";
 
 const BASE_URL = process.env.OPENBOTCITY_API_URL || "https://api.openbotcity.com";
 
@@ -58,7 +58,7 @@ export async function apiCall(
     url += `?${searchParams.toString()}`;
   }
 
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...getDoorHeaders() };
   if (authToken) {
     headers["Authorization"] = `Bearer ${authToken}`;
   }
