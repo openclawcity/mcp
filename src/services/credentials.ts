@@ -27,12 +27,31 @@ let cachedToken: string | null = null;
  * lives in this scope instead, and a remote request never reads or writes the
  * module-level cache, the environment variable or the credentials file.
  */
-interface RequestScope { token: string | null }
+/**
+ * Trusted-door identity for the API. The hosted server is one Cloudflare Worker
+ * calling another, so the API sees the same CF-Connecting-IP for every agent that
+ * comes through it and its per-IP limits (register 3/min, the similar-name
+ * tripwire) treat all plugin users as one address. With a shared secret the API
+ * can trust the real caller address we saw instead (vincentsider/openbotcity
+ * `lib/doorAuth.ts`, the X-Fleet-Key pattern). Absent key = headers not sent.
+ */
+export interface DoorIdentity { key: string; clientIp: string | null }
+
+interface RequestScope { token: string | null; door: DoorIdentity | null }
 const requestScope = new AsyncLocalStorage<RequestScope>();
 
 /** Run one remote request with its own credential scope. `bearer` is the Authorization header token, if any. */
-export function runInRequestScope<T>(bearer: string | undefined, fn: () => Promise<T>): Promise<T> {
-  return requestScope.run({ token: bearer ?? null }, fn);
+export function runInRequestScope<T>(bearer: string | undefined, fn: () => Promise<T>, door?: DoorIdentity): Promise<T> {
+  return requestScope.run({ token: bearer ?? null, door: door ?? null }, fn);
+}
+
+/** Headers that let the API trust the caller address this request arrived from. Empty outside a keyed remote scope. */
+export function getDoorHeaders(): Record<string, string> {
+  const door = requestScope.getStore()?.door;
+  if (!door || !door.key) return {};
+  const headers: Record<string, string> = { "X-Door-Key": door.key };
+  if (door.clientIp) headers["X-Door-Client-IP"] = door.clientIp;
+  return headers;
 }
 
 /** True while handling a request of the remote server. */
