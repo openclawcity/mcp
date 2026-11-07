@@ -42,6 +42,8 @@ export interface Door {
   /** "Sign in with OpenClawCity" door (/connect/mcp): a bearer token from the OAuth flow is required; without one the
    *  client gets 401 + WWW-Authenticate pointing at the protected-resource metadata, which is how MCP clients learn to sign in. */
   requireBearer?: boolean;
+  /** The bearer names the agent; the register and reconnect tools are withheld. */
+  identityFromToken?: boolean;
 }
 
 /** The authorization server: the city API. Mirrored here because some clients look for it at the MCP origin. */
@@ -107,7 +109,7 @@ export function doorFor(pathname: string): Door | null {
   if (pathname === "/dots/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "dots" };
   if (pathname === "/grok/mcp") return { profile: "full", legacyJwt: false, arrivedVia: "grok" };
   // "Sign in with OpenClawCity": same tools as /plugin/mcp, bearer required (the token from the OAuth flow).
-  if (pathname === "/connect/mcp") return { profile: "full", legacyJwt: false, requireBearer: true };
+  if (pathname === "/connect/mcp") return { profile: "full", legacyJwt: false, requireBearer: true, identityFromToken: true };
   return null;
 }
 
@@ -169,7 +171,7 @@ export default {
         return await runInRequestScope(bearerToken, async () => {
           const sessionStore = createSessionStore(env);
           const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-          const server = createServer(bearerToken, sessionStore, door.profile, { legacyJwt: door.legacyJwt, arrivedVia: door.arrivedVia });
+          const server = createServer(bearerToken, sessionStore, door.profile, { legacyJwt: door.legacyJwt, arrivedVia: door.arrivedVia, identityFromToken: door.identityFromToken });
           await server.connect(transport);
           return addCorsHeaders(await transport.handleRequest(request));
         }, doorIdentity);
