@@ -52,14 +52,27 @@ export interface SseMessage {
  * starting with ":" is a comment; a field without a colon is its name with an
  * empty value (SSE spec).
  */
+/** A frame larger than this is not ours: the parser drops the partial line and the pending fields. */
+export const SSE_MAX_PENDING_BYTES = 1024 * 1024;
+
 export class SseParser {
   private buffer = "";
   private id: string | null = null;
   private event = "";
   private data: string[] = [];
+  /** How many times a line or frame overran the cap and was dropped. */
+  dropped = 0;
 
   feed(chunk: string): SseMessage[] {
     this.buffer += chunk;
+    if (this.buffer.length > SSE_MAX_PENDING_BYTES) {
+      // One line without a newline that long is never a city frame: forget it,
+      // keep reading from the next newline (audit 8 Nov: unbounded growth).
+      const nl = this.buffer.lastIndexOf("\n");
+      this.buffer = nl >= 0 ? this.buffer.slice(nl + 1) : "";
+      this.event = ""; this.data = [];
+      this.dropped++;
+    }
     const out: SseMessage[] = [];
     let nl: number;
     while ((nl = this.buffer.indexOf("\n")) >= 0) {
@@ -81,7 +94,10 @@ export class SseParser {
       if (value.startsWith(" ")) value = value.slice(1);
       if (field === "id") this.id = value;
       else if (field === "event") this.event = value;
-      else if (field === "data") this.data.push(value);
+      else if (field === "data") {
+        this.data.push(value);
+        if (this.data.reduce((n, d) => n + d.length, 0) > SSE_MAX_PENDING_BYTES) { this.data = []; this.event = ""; this.dropped++; }
+      }
       // "retry" and unknown fields are ignored; our backoff is our own.
     }
     return out;
@@ -105,7 +121,13 @@ export function toFrame(seq: number, id: string | null, data: string): CityEvent
   return {
     seq,
     id: numericId,
-    type: typeof raw.type === "string" ? raw.type : typeof raw.event_type === "string" ? raw.event_type : "unknown",
+    // The server frame (workers/src/lib/cityEventFrame.ts) is
+    // { type: 'city_event', eventType, from, text, metadata: { reply_command, conversation_id, ... } }.
+    // `type` is the envelope; the event's kind is `eventType` (audit 8 Nov 2026:
+    // reading `type` labelled every event "city_event").
+    type: typeof raw.eventType === "string" ? raw.eventType
+      : typeof raw.event_type === "string" ? raw.event_type
+      : typeof raw.type === "string" && raw.type !== "city_event" ? raw.type : "unknown",
     from,
     text: typeof raw.text === "string" ? raw.text : typeof raw.message === "string" ? raw.message : "",
     metadata: raw.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata) ? (raw.metadata as Record<string, unknown>) : {},
@@ -121,7 +143,36 @@ export class EventBuffer {
   private readUpTo = 0;
   private waiters: Array<() => void> = [];
 
-  constructor(private readonly max = 200) {}
+  /**
+   * `persistPath`: unread frames are mirrored to this file (one JSON line each)
+   * and loaded back on start. The server acknowledged these rows when it pushed
+   * them, so without this a restart lost them (audit 8 Nov).
+   */
+  constructor(private readonly max = 200, private readonly persistPath?: string) {
+    if (persistPath) this.load();
+  }
+
+  private load(): void {
+    try {
+      const fs = require("node:fs") as typeof import("node:fs");
+      if (!fs.existsSync(this.persistPath!)) return;
+      const lines = fs.readFileSync(this.persistPath!, "utf8").split("\n").filter(Boolean).slice(-this.max);
+      for (const line of lines) {
+        const parsed = JSON.parse(line) as { id: string | null; data: string };
+        const frame = toFrame(this.seq + 1, parsed.id, parsed.data);
+        if (frame) { this.seq = frame.seq; this.frames.push(frame); }
+      }
+    } catch { /* a corrupt file is forgotten, not fatal */ }
+  }
+
+  private save(): void {
+    if (!this.persistPath) return;
+    try {
+      const fs = require("node:fs") as typeof import("node:fs");
+      const unread = this.frames.filter((f) => f.seq > this.readUpTo);
+      fs.writeFileSync(this.persistPath, unread.map((f) => JSON.stringify({ id: f.id === null ? null : String(f.id), data: JSON.stringify(f.raw) })).join("\n") + (unread.length ? "\n" : ""), { mode: 0o600 });
+    } catch { /* unwritable: memory still works */ }
+  }
 
   push(id: string | null, data: string): CityEventFrame | null {
     const frame = toFrame(this.seq + 1, id, data);
@@ -129,6 +180,7 @@ export class EventBuffer {
     this.seq = frame.seq;
     this.frames.push(frame);
     if (this.frames.length > this.max) this.frames.splice(0, this.frames.length - this.max);
+    this.save();
     const waiters = this.waiters;
     this.waiters = [];
     for (const w of waiters) w();
@@ -138,8 +190,13 @@ export class EventBuffer {
   /** Frames not yet handed out, oldest first. Marks them read. */
   takeUnread(): CityEventFrame[] {
     const unread = this.frames.filter((f) => f.seq > this.readUpTo);
-    if (unread.length > 0) this.readUpTo = unread[unread.length - 1]!.seq;
+    if (unread.length > 0) { this.readUpTo = unread[unread.length - 1]!.seq; this.save(); }
     return unread;
+  }
+
+  /** Peek without marking read (a cancelled tool call must not consume). */
+  peekUnread(): CityEventFrame[] {
+    return this.frames.filter((f) => f.seq > this.readUpTo);
   }
 
   /** How many frames are waiting, without taking them. */
@@ -187,6 +244,16 @@ export interface EventStreamOptions {
   baseUrl: string;
   /** Re-read on every (re)connect, so a registration made after start is picked up. */
   getToken: () => string | null;
+  /** Called after a 401/403 so the next getToken() reads the credentials afresh. */
+  onDeadToken?: () => void;
+  /**
+   * Milliseconds since the agent last used a tool. The stream connects only
+   * while the agent is active (within IDLE_MS): an idle host must not make the
+   * agent look present while nobody reads its events (audit 8 Nov).
+   */
+  idleMs?: () => number;
+  /** Unread frames survive a restart here (one JSON line each). Optional. */
+  persistPath?: string;
   onFrame?: (frame: CityEventFrame) => void;
   /** Test seams. */
   fetchImpl?: typeof fetch;
@@ -202,12 +269,15 @@ const BACKOFF_MIN_MS = 1_000;
 const BACKOFF_MAX_MS = 60_000;
 const RECONNECT_PAUSE_MS = 1_000;
 const MIN_HEALTHY_MS = 5_000;
+/** No tool call for this long = the agent is not listening; the stream lets go. */
+export const IDLE_MS = 30 * 60 * 1000;
+const IDLE_POLL_MS = 15_000;
 
 /**
  * Start holding the stream. Returns at once; the loop runs until stop().
  */
 export function startEventStream(opts: EventStreamOptions): EventStreamController {
-  const buffer = new EventBuffer();
+  const buffer = new EventBuffer(200, opts.persistPath);
   const fetchImpl = opts.fetchImpl ?? fetch;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const log = opts.log ?? ((line: string) => console.error(line));
@@ -218,7 +288,8 @@ export function startEventStream(opts: EventStreamOptions): EventStreamControlle
   const state: EventStreamStatus = { enabled: true, connected: false, connectedSince: null, lastEventAt: null, lastError: null, reconnects: 0, unread: 0 };
   let backoff = BACKOFF_MIN_MS;
 
-  async function once(): Promise<"ok" | "no_token" | "dead_token" | "error"> {
+  async function once(): Promise<"ok" | "no_token" | "dead_token" | "error" | "idle"> {
+    if (opts.idleMs && opts.idleMs() > IDLE_MS) return "idle";
     const token = opts.getToken();
     if (!token) return "no_token";
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: "text/event-stream" };
@@ -226,6 +297,8 @@ export function startEventStream(opts: EventStreamOptions): EventStreamControlle
     if (lastId !== null) headers["Last-Event-ID"] = String(lastId);
     current = new AbortController();
     const recycle = setTimeout(() => current?.abort(), recycleMs);
+    // Let go as soon as the agent goes idle, not at the next recycle.
+    const idleWatch = opts.idleMs ? setInterval(() => { if (opts.idleMs!() > IDLE_MS) current?.abort(); }, IDLE_POLL_MS) : null;
     try {
       const res = await fetchImpl(`${opts.baseUrl}/agent-channel/stream`, { headers, signal: current.signal });
       if (res.status === 401 || res.status === 403) { state.lastError = `stream refused (${res.status})`; return "dead_token"; }
@@ -255,6 +328,7 @@ export function startEventStream(opts: EventStreamOptions): EventStreamControlle
       return "error";
     } finally {
       clearTimeout(recycle);
+      if (idleWatch) clearInterval(idleWatch);
       state.connected = false;
       current = null;
     }
@@ -274,8 +348,14 @@ export function startEventStream(opts: EventStreamOptions): EventStreamControlle
         else await sleep(RECONNECT_PAUSE_MS);
         continue;
       }
+      if (outcome === "idle") { await sleep(IDLE_POLL_MS); continue; }
       if (outcome === "no_token") { await sleep(NO_TOKEN_WAIT_MS); continue; }
-      if (outcome === "dead_token") { log(`[openbotcity] event stream: ${state.lastError}; waiting ${DEAD_TOKEN_WAIT_MS / 1000}s before re-reading credentials`); await sleep(DEAD_TOKEN_WAIT_MS); continue; }
+      if (outcome === "dead_token") {
+        log(`[openbotcity] event stream: ${state.lastError}; waiting ${DEAD_TOKEN_WAIT_MS / 1000}s before re-reading credentials`);
+        opts.onDeadToken?.();
+        await sleep(DEAD_TOKEN_WAIT_MS);
+        continue;
+      }
       log(`[openbotcity] event stream: ${state.lastError}; retry in ${backoff / 1000}s`);
       await sleep(backoff);
       backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
@@ -294,6 +374,8 @@ export function startEventStream(opts: EventStreamOptions): EventStreamControlle
 export function describeFrame(f: CityEventFrame): string {
   const who = f.from ? `${f.from.name}` : "City";
   const text = f.text ? `: ${f.text.length > 300 ? `${f.text.slice(0, 300)}…` : f.text}` : "";
-  const hint = typeof f.raw.reply_with === "string" ? `\n    reply: ${f.raw.reply_with}` : typeof f.raw.action === "string" ? `\n    action: ${f.raw.action}` : "";
-  return `- [${f.type}] ${who}${text}${hint}`;
+  const m = f.metadata;
+  const ids = ["conversation_id", "proposal_id", "message_id", "session_id"].filter((k) => typeof m[k] === "string").map((k) => `${k}=${String(m[k])}`);
+  const reply = typeof m.reply_command === "string" ? `\n    reply: ${m.reply_command}` : "";
+  return `- [${f.type}] ${who}${text}${ids.length ? ` (${ids.join(", ")})` : ""}${reply}`;
 }

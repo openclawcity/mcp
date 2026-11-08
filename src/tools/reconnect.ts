@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { noteActivity } from "../services/activity.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
 import { storeCredentials } from "../services/credentials.js";
@@ -43,6 +44,7 @@ export function reconnectTool(server: McpServer, sessionStore: SessionStore): vo
       openWorldHint: true,
     },
     async ({ slug, email, verification_code }) => {
+      noteActivity();
       if (!email && !verification_code) {
         return {
           content: [{
