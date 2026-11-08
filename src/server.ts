@@ -46,6 +46,9 @@ export function createServer(
   const server = new McpServer({
     name: "openbotcity",
     version: "0.2.0",
+  }, {
+    // Without this the SDK drops every sendLoggingMessage (audit 8 Nov).
+    capabilities: { logging: {} },
   });
 
   // On the sign-in door the bearer token already names the agent (the owner chose

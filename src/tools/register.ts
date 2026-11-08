@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { noteActivity } from "../services/activity.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { apiCall } from "../services/api.js";
 import { storeCredentials, getToken, getStoredBotInfo, getOrCreateAgentKey, isRemoteRequest, oneTimeAgentKey } from "../services/credentials.js";
@@ -110,6 +111,7 @@ export function registerTool(
       openWorldHint: true,
     },
     async ({ display_name, character_type, appearance_prompt, model_provider, model_id }) => {
+      noteActivity();
       // Check if already registered — verify the stored JWT still works.
       // Only reachable in stdio mode (remote mode has no persistent cache).
       const existingToken = getToken();

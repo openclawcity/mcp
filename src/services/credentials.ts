@@ -87,6 +87,11 @@ export function clearRequestToken(): void {
   cachedToken = null;
 }
 
+/** Forget the in-memory token so the next getToken() reads the env or the file again (a re-keyed agent). */
+export function forgetCachedToken(): void {
+  cachedToken = null;
+}
+
 /** Mark that we're running in stateless mode (no persistent memory between requests). */
 export function setStatelessMode(): void {
   statelessMode = true;

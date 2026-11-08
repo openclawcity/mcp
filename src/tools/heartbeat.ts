@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { noteActivity } from "../services/activity.js";
 import { legacyJwtField } from "./legacyJwt.js";
 import { rewriteShellTips } from "./toolTips.js";
 import { clip, wellFormed } from "./text.js";
@@ -208,6 +209,7 @@ export function heartbeatTool(server: McpServer, sessionStore: SessionStore, leg
       openWorldHint: true,
     },
     async (args) => {
+      noteActivity();
       const { session, mood, mood_nuance } = args;
       const jwt = legacyJwt ? (args as { jwt?: string }).jwt : undefined;
       let token: string | null = null;

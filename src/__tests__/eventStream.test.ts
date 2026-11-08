@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { createServer } from "../server.js";
 import type { SessionStore } from "../services/sessionStore.js";
-import { SseParser, EventBuffer, startEventStream, toFrame, describeFrame, type EventStreamController } from "../services/eventStream.js";
+import { SseParser, EventBuffer, startEventStream, toFrame, describeFrame, IDLE_MS, type EventStreamController } from "../services/eventStream.js";
 
 const fakeStore: SessionStore = {
   async get() { return null; },
@@ -21,8 +21,11 @@ async function connectedClient(eventStream?: EventStreamController) {
   return client;
 }
 
-const frame = (id: number, type: string, text: string, from = { id: "b2", name: "Hiro" }) =>
-  `id: ${id}\nevent: city_event\ndata: ${JSON.stringify({ type, from, text, metadata: {}, reply_with: type === "channel_chat" ? 'openbotcity_action(endpoint="/channels/chat/reply", body={"message":"..."})' : undefined })}\n\n`;
+/** EXACTLY what workers/src/lib/cityEventFrame.ts sends: the envelope type is 'city_event', the kind is eventType. */
+const serverFrame = (id: number, eventType: string, text: string, from = { id: "b2", name: "Hiro" }, metadata: Record<string, unknown> = {}) =>
+  ({ type: "city_event", seq: id, eventType, from, text, timestamp: 1, metadata });
+const frame = (id: number, eventType: string, text: string, from = { id: "b2", name: "Hiro" }, metadata: Record<string, unknown> = {}) =>
+  `id: ${id}\nevent: city_event\ndata: ${JSON.stringify(serverFrame(id, eventType, text, from, metadata))}\n\n`;
 
 describe("SseParser", () => {
   it("assembles messages across chunk boundaries, drops comments, joins data lines", () => {
@@ -40,10 +43,15 @@ describe("SseParser", () => {
 });
 
 describe("toFrame / describeFrame", () => {
-  it("reads the city frame fields and keeps the raw object", () => {
-    const f = toFrame(1, "12", JSON.stringify({ type: "channel_chat", from: { id: "u1", name: "hiro" }, text: "hello?", metadata: { messageId: "m1" } }));
-    expect(f).toMatchObject({ seq: 1, id: 12, type: "channel_chat", from: { id: "u1", name: "hiro" }, text: "hello?", metadata: { messageId: "m1" } });
-    expect(describeFrame(f!)).toBe("- [channel_chat] hiro: hello?");
+  it("reads the SERVER frame: the kind from eventType, never the 'city_event' envelope (audit 8 Nov)", () => {
+    const f = toFrame(1, "12", JSON.stringify(serverFrame(12, "channel_chat", "hello?", { id: "viewer", name: "hiro (Twitch)" }, { message_id: "m1", reply_command: 'POST /channels/chat/reply {"message":"<your reply>"}' })));
+    expect(f).toMatchObject({ seq: 1, id: 12, type: "channel_chat", from: { id: "viewer", name: "hiro (Twitch)" }, text: "hello?" });
+    expect(describeFrame(f!)).toBe('- [channel_chat] hiro (Twitch): hello? (message_id=m1)\n    reply: POST /channels/chat/reply {"message":"<your reply>"}');
+    const dm = toFrame(2, "13", JSON.stringify(serverFrame(13, "dm_message", "hi", { id: "b9", name: "Sable" }, { conversation_id: "c1", reply_command: "x" })));
+    expect(dm!.type).toBe("dm_message");
+    expect(describeFrame(dm!)).toContain("conversation_id=c1");
+    // a frame with only the envelope type is 'unknown', not 'city_event'
+    expect(toFrame(3, "14", JSON.stringify({ type: "city_event", text: "?" }))!.type).toBe("unknown");
   });
   it("refuses junk", () => {
     expect(toFrame(1, "1", "not json")).toBeNull();
@@ -54,14 +62,14 @@ describe("toFrame / describeFrame", () => {
 describe("EventBuffer", () => {
   it("hands out each frame once, in order, and remembers the last stream id", async () => {
     const b = new EventBuffer(3);
-    b.push("10", JSON.stringify({ type: "dm_message", text: "a" }));
-    b.push("11", JSON.stringify({ type: "dm_message", text: "b" }));
+    b.push("10", JSON.stringify(serverFrame(10, "dm_message", "a")));
+    b.push("11", JSON.stringify(serverFrame(11, "dm_message", "b")));
     expect(b.unreadCount()).toBe(2);
     expect(b.takeUnread().map((f) => f.text)).toEqual(["a", "b"]);
     expect(b.takeUnread()).toEqual([]);
-    b.push("12", JSON.stringify({ type: "x", text: "c" }));
-    b.push("13", JSON.stringify({ type: "x", text: "d" }));
-    b.push("14", JSON.stringify({ type: "x", text: "e" }));
+    b.push("12", JSON.stringify(serverFrame(12, "x", "c")));
+    b.push("13", JSON.stringify(serverFrame(13, "x", "d")));
+    b.push("14", JSON.stringify(serverFrame(14, "x", "e")));
     // capped at 3: the oldest unread ("c") is gone, the newest three remain
     expect(b.takeUnread().map((f) => f.text)).toEqual(["c", "d", "e"].slice(-3));
     expect(b.lastId()).toBe(14);
@@ -69,7 +77,7 @@ describe("EventBuffer", () => {
   it("waitForNext resolves on the next push and times out otherwise", async () => {
     const b = new EventBuffer();
     const late = b.waitForNext(10_000);
-    b.push("1", JSON.stringify({ type: "x", text: "now" }));
+    b.push("1", JSON.stringify(serverFrame(1, "x", "now")));
     expect(await late).toBe(true);
     b.takeUnread();
     expect(await b.waitForNext(5)).toBe(false);
@@ -130,7 +138,7 @@ describe("startEventStream", () => {
 });
 
 describe("openbotcity_events tool and the heartbeat prefix", () => {
-  it("is absent without a held stream (remote), present with one (stdio)", async () => {
+  it("is absent without a held stream (remote), present with one (stdio), and NOT read-only (it consumes)", async () => {
     const without = await connectedClient();
     expect((await without.listTools()).tools.map((t) => t.name)).not.toContain("openbotcity_events");
     const buffer = new EventBuffer();
@@ -138,14 +146,15 @@ describe("openbotcity_events tool and the heartbeat prefix", () => {
     const withStream = await connectedClient(ctl);
     const tools = (await withStream.listTools()).tools;
     const t = tools.find((x) => x.name === "openbotcity_events");
-    expect(t?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(t?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect((t?.inputSchema as { properties: { wait_seconds: { maximum: number } } }).properties.wait_seconds.maximum).toBe(55);
   });
 
   it("returns new events once, tells the agent how to answer viewers, and waits when asked", async () => {
     const buffer = new EventBuffer();
     const ctl: EventStreamController = { buffer, status: () => ({ enabled: true, connected: true, connectedSince: 1, lastEventAt: Date.now(), lastError: null, reconnects: 0, unread: buffer.unreadCount() }), stop() {} };
     const client = await connectedClient(ctl);
-    buffer.push("5", JSON.stringify({ type: "channel_chat", from: { id: "u", name: "hiro" }, text: "hello pinion" }));
+    buffer.push("5", JSON.stringify(serverFrame(5, "channel_chat", "hello pinion", { id: "u", name: "hiro" })));
     const first = await client.callTool({ name: "openbotcity_events", arguments: {} });
     const text = (first.content as Array<{ text: string }>)[0]!.text;
     expect(text).toContain("1 new event");
@@ -155,7 +164,7 @@ describe("openbotcity_events tool and the heartbeat prefix", () => {
     expect((second.content as Array<{ text: string }>)[0]!.text).toContain("No new events");
     const waiting = client.callTool({ name: "openbotcity_events", arguments: { wait_seconds: 5 } });
     await new Promise((r) => setTimeout(r, 10));
-    buffer.push("6", JSON.stringify({ type: "dm_message", from: { id: "b", name: "Sable" }, text: "ping" }));
+    buffer.push("6", JSON.stringify(serverFrame(6, "dm_message", "ping", { id: "b", name: "Sable" })));
     const third = await waiting;
     expect((third.content as Array<{ text: string }>)[0]!.text).toContain("[dm_message] Sable: ping");
   });
@@ -166,5 +175,72 @@ describe("openbotcity_events tool and the heartbeat prefix", () => {
     const client = await connectedClient(ctl);
     const r = await client.callTool({ name: "openbotcity_events", arguments: {} });
     expect((r.content as Array<{ text: string }>)[0]!.text).toMatch(/NOT connected .*503.*reconnecting/);
+  });
+});
+
+describe("SseParser caps what it will hold (audit 8 Nov)", () => {
+  it("drops an endless line instead of growing, and keeps parsing after the next newline", async () => {
+    const { SSE_MAX_PENDING_BYTES } = await import("../services/eventStream.js");
+    const p = new SseParser();
+    expect(p.feed("x".repeat(SSE_MAX_PENDING_BYTES + 10))).toEqual([]);
+    expect(p.dropped).toBe(1);
+    expect(p.feed("yyy\nid: 5\nevent: city_event\ndata: {\"type\":\"dm_message\",\"text\":\"ok\"}\n\n")).toEqual([
+      { id: "5", event: "city_event", data: "{\"type\":\"dm_message\",\"text\":\"ok\"}" },
+    ]);
+  });
+});
+
+describe("audit 8 Nov: the stream only while the agent is active, survives a restart, re-reads a dead token", () => {
+  it("does not connect while the agent is idle, and lets go when it goes idle", async () => {
+    const fetchImpl = vi.fn(async () => new Response(streamBody([]), { status: 200 })) as unknown as typeof fetch;
+    let idle = IDLE_MS + 1;
+    const sleeps: number[] = [];
+    const ctl = startEventStream({ baseUrl: "https://api.test", getToken: () => "jwt", fetchImpl, idleMs: () => idle, sleep: async (ms) => { sleeps.push(ms); await new Promise((r) => setTimeout(r, 1)); }, log: () => {} });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(ctl.status().connected).toBe(false);
+    idle = 0;
+    await new Promise((r) => setTimeout(r, 40));
+    ctl.stop();
+    expect(fetchImpl).toHaveBeenCalled();
+  });
+
+  it("calls onDeadToken after a 401 so the credentials are read again", async () => {
+    const fetchImpl = vi.fn(async () => new Response("nope", { status: 401 })) as unknown as typeof fetch;
+    const onDeadToken = vi.fn();
+    const ctl = startEventStream({ baseUrl: "https://api.test", getToken: () => "dead", fetchImpl, onDeadToken, sleep: async () => { await new Promise((r) => setTimeout(r, 1)); }, log: () => {} });
+    await new Promise((r) => setTimeout(r, 30));
+    ctl.stop();
+    expect(onDeadToken).toHaveBeenCalled();
+  });
+
+  it("persists unread frames to a file and loads them back; read frames are dropped from it", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "obc-ev-")), "events.jsonl");
+    const a = new EventBuffer(200, file);
+    a.push("41", JSON.stringify(serverFrame(41, "channel_chat", "first")));
+    a.push("42", JSON.stringify(serverFrame(42, "dm_message", "second", { id: "b", name: "Sable" }, { conversation_id: "c1" })));
+    expect(fs.readFileSync(file, "utf8").split("\n").filter(Boolean)).toHaveLength(2);
+    const b = new EventBuffer(200, file);
+    expect(b.takeUnread().map((f) => [f.id, f.type, f.text])).toEqual([[41, "channel_chat", "first"], [42, "dm_message", "second"]]);
+    expect(b.lastId()).toBe(42);
+    expect(fs.readFileSync(file, "utf8")).toBe("");
+    expect(new EventBuffer(200, file).unreadCount()).toBe(0);
+  });
+
+  it("a cancelled openbotcity_events call consumes nothing", async () => {
+    const buffer = new EventBuffer();
+    const ctl: EventStreamController = { buffer, status: () => ({ enabled: true, connected: true, connectedSince: 1, lastEventAt: null, lastError: null, reconnects: 0, unread: buffer.unreadCount() }), stop() {} };
+    const client = await connectedClient(ctl);
+    const ac = new AbortController();
+    const call = client.callTool({ name: "openbotcity_events", arguments: { wait_seconds: 5 } }, undefined, { signal: ac.signal });
+    await new Promise((r) => setTimeout(r, 10));
+    buffer.push("7", JSON.stringify(serverFrame(7, "dm_message", "late")));
+    ac.abort();
+    await call.catch(() => undefined);
+    // whatever the host saw, the event is still waiting for the next real call
+    expect(buffer.unreadCount()).toBe(1);
   });
 });
