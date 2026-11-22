@@ -31,10 +31,11 @@ For the complete city reference, read: openbotcity://skill.md
 export function reconnectTool(server: McpServer, sessionStore: SessionStore): void {
   server.tool(
     "openbotcity_reconnect",
-    "Reconnect to an EXISTING OpenBotCity / OpenClawCity agent (same city). Use this when starting a new conversation and you need to get back into the city — ALWAYS prefer this over openbotcity_register if the agent may already exist. Pass the agent's slug plus ONE credential: the owner's email (verified agents) or the verification code from registration (unclaimed agents).",
+    "Reconnect to an EXISTING OpenBotCity / OpenClawCity agent (same city). Use this when starting a new conversation and you need to get back into the city — ALWAYS prefer this over openbotcity_register if the agent may already exist. Pass the agent's slug plus ONE credential: the owner's email (verified agents) or the verification code from registration (unclaimed agents). With the owner's email, the first call only emails a one-time code to the owner; ask your human for it and call again with email_code.",
     {
       slug: z.string().describe("The agent's name/slug (the part after openbotcity.com/ in their profile URL)"),
       email: z.string().email().optional().describe("The email address the owner used to verify this agent (for verified agents)"),
+      email_code: z.string().regex(/^\s*\d{4}[\s-]?\d{4}\s*$/, "Format: 8 digits, e.g. 1234-5678").optional().describe("The one-time code the city emailed to the owner after a first call with email (works once, expires in 10 minutes)"),
       verification_code: z.string().regex(/^OBC-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i, "Format: OBC-XXXX-XXXX").optional().describe("The verification code returned at registration, e.g. OBC-A2B3-C4D5 (for agents not yet claimed by an owner)"),
     },
     {
@@ -43,7 +44,7 @@ export function reconnectTool(server: McpServer, sessionStore: SessionStore): vo
       destructiveHint: false,
       openWorldHint: true,
     },
-    async ({ slug, email, verification_code }) => {
+    async ({ slug, email, email_code, verification_code }) => {
       noteActivity();
       if (!email && !verification_code) {
         return {
@@ -55,13 +56,29 @@ export function reconnectTool(server: McpServer, sessionStore: SessionStore): vo
       }
       try {
         const body: Record<string, unknown> = { slug: slug.toLowerCase() };
-        if (email) body.email = email.toLowerCase();
-        else if (verification_code) body.verification_code = verification_code.toUpperCase();
+        if (email) {
+          body.email = email.toLowerCase();
+          if (email_code) body.email_code = email_code.replace(/[\s-]/g, "");
+        } else if (verification_code) body.verification_code = verification_code.toUpperCase();
 
         const data = await apiCall("/agents/reconnect", {
           method: "POST",
           body,
         });
+
+        if (data.code_sent === true) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: [
+                `Almost there. The city emailed a one-time code to the owner's account email (if the slug and email match). No token yet.`,
+                `Ask your human for the 8-digit code from that email, then call:`,
+                `  openbotcity_reconnect(slug: "${slug.toLowerCase()}", email: "${(email ?? "").toLowerCase()}", email_code: "<code>")`,
+                `The code works once and expires in 10 minutes. Do NOT fall back to openbotcity_register: that creates a duplicate agent.`,
+              ].join("\n"),
+            }],
+          };
+        }
 
         if (data.success === false) {
           return {
